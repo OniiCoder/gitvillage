@@ -23,6 +23,8 @@ import type {
   VillagerEntity,
 } from './types';
 import {
+  type ContributorClanProfile,
+  buildContributorClanMap,
   createExplorerAvatar,
   createGateVisitorEntity,
   createVillagerEntity,
@@ -31,6 +33,7 @@ import {
   getCommitCargoMetrics,
   getRoleMeta,
   getVisitorStatusMeta,
+  normalizeAuthorKey,
   refreshVillagerCargo,
 } from './villagerMesh';
 import { type BuiltWorld, buildArchipelagoWorld } from './worldBuilder';
@@ -97,6 +100,7 @@ const overlayLayer = document.getElementById('overlay-layer') as HTMLDivElement;
 const hoverPill = document.getElementById('hover-pill') as HTMLDivElement;
 const walkHint = document.getElementById('walk-hint') as HTMLDivElement;
 const statsPill = document.getElementById('repo-stats-pill') as HTMLSpanElement;
+const contributorStack = document.getElementById('contributor-stack') as HTMLDivElement;
 const repoForm = document.getElementById('repo-form') as HTMLFormElement;
 const repoInput = document.getElementById('repo-input') as HTMLInputElement;
 const loadBtn = document.getElementById('load-btn') as HTMLButtonElement;
@@ -375,6 +379,8 @@ let selectedGateVisitor: GateVisitorEntity | null = null;
 
 let followVillager = false;
 let activeFilter = 'all';
+let activeAuthorKey: string | null = null;
+let clanMap = new Map<string, ContributorClanProfile>();
 let rosterGroupMode: 'branch' | 'author' = 'branch';
 let timeOfDay: TimeOfDay = 'day';
 let cameraMode: CameraMode = 'orbit';
@@ -462,6 +468,7 @@ function rebuildVillageFromGraph(
   if (!options.preserveCamera) {
     selectedVillager = null;
     selectedGateVisitor = null;
+    activeAuthorKey = null;
     followVillager = false;
     inspectorCard.hidden = true;
   }
@@ -477,6 +484,9 @@ function rebuildVillageFromGraph(
   overlayLayer.replaceChildren();
   emoteElements.clear();
 
+  // Build collision-free Contributor Clan profiles so every author's commits share clear kinship!
+  clanMap = buildContributorClanMap(graph.commitsBySha.values());
+
   builtWorld = buildArchipelagoWorld(graph);
   scene.add(builtWorld.worldGroup);
 
@@ -489,7 +499,8 @@ function rebuildVillageFromGraph(
     const isl = islandByBranch.get(branch.name);
     if (!isl) continue;
     branch.commits.forEach((commit, idx) => {
-      const entity = createVillagerEntity(commit, isl, idx, branch.commits.length);
+      const clan = clanMap.get(normalizeAuthorKey(commit));
+      const entity = createVillagerEntity(commit, isl, idx, branch.commits.length, clan);
       builtWorld!.worldGroup.add(entity.root);
       villagers.push(entity);
       villagerBySha.set(commit.sha, entity);
@@ -529,6 +540,7 @@ function rebuildVillageFromGraph(
   }
 
   applyAtmosphere(timeOfDay);
+  renderContributorStack();
   applyVillagerFilter(activeFilter);
   renderRosterPopover();
 
@@ -773,7 +785,8 @@ async function populateCommitInspector(commit: CommitData): Promise<void> {
   insQuirk.textContent = `${role.title} · ${describeCarriedLoad(cargoMeta.filesCount, cargoMeta.totalLines)}`;
 
   insAvatar.replaceChildren();
-  const bgHex = `#${getAuthorColorHex(commit.authorLogin).toString(16).padStart(6, '0')}`;
+  const clan = clanMap.get(normalizeAuthorKey(commit));
+  const bgHex = clan?.colorCss ?? `#${getAuthorColorHex(commit.authorLogin).toString(16).padStart(6, '0')}`;
   insAvatar.style.background = bgHex;
   if (commit.authorAvatar) {
     const img = document.createElement('img');
@@ -781,11 +794,15 @@ async function populateCommitInspector(commit: CommitData): Promise<void> {
     img.alt = commit.authorName;
     insAvatar.appendChild(img);
   } else {
-    insAvatar.textContent = commit.authorName.slice(0, 1).toUpperCase();
+    insAvatar.textContent = clan?.initials ?? commit.authorName.slice(0, 1).toUpperCase();
   }
 
-  insAuthorName.textContent = commit.authorName;
-  insTimestamp.textContent = `${formatRelativeTime(commit.timestamp)} · ${new Date(commit.timestamp).toLocaleDateString()}`;
+  insAuthorName.textContent = clan
+    ? `${commit.authorName} · ${clan.emblem} ${clan.initials}`
+    : commit.authorName;
+  insTimestamp.textContent = clan
+    ? `${clan.earLabel} (${clan.commitCount} in village) · ${formatRelativeTime(commit.timestamp)}`
+    : `${formatRelativeTime(commit.timestamp)} · ${new Date(commit.timestamp).toLocaleDateString()}`;
   insShaText.textContent = commit.shortSha;
   insShaCopy.onclick = () => {
     navigator.clipboard?.writeText(commit.sha).catch(() => {});
@@ -933,17 +950,63 @@ insCloseBtn.addEventListener('click', () => {
   inspectorCard.hidden = true;
 });
 
-// Filter Dock
+// Apple Freeform-style Collaborator Avatar Stack in Topbar
+function renderContributorStack(): void {
+  const clans = [...clanMap.values()].slice(0, 6);
+  const buttons = clans.map((clan) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'clan-avatar-btn';
+    btn.style.background = clan.colorCss;
+    btn.setAttribute('aria-pressed', activeAuthorKey === clan.authorKey ? 'true' : 'false');
+    btn.setAttribute(
+      'aria-label',
+      `Spotlight contributor ${clan.authorName} (${clan.commitCount} commits)`,
+    );
+    btn.title = `${clan.emblem} ${clan.authorName} (@${clan.authorLogin}) · ${clan.earLabel} · ${clan.commitCount} commit${clan.commitCount === 1 ? '' : 's'}`;
+
+    if (clan.authorAvatar) {
+      const img = document.createElement('img');
+      img.src = clan.authorAvatar;
+      img.alt = '';
+      btn.appendChild(img);
+    } else {
+      btn.textContent = clan.initials;
+    }
+
+    btn.addEventListener('click', () => {
+      activeAuthorKey = activeAuthorKey === clan.authorKey ? null : clan.authorKey;
+      sound.playPop(activeAuthorKey ? 587.33 : 440);
+      renderContributorStack();
+      applyVillagerFilter(activeFilter);
+      if (activeAuthorKey) {
+        showToast(
+          `${clan.emblem} ${clan.authorName} — ${clan.earLabel} · ${clan.commitCount} commit${clan.commitCount === 1 ? '' : 's'} highlighted`,
+        );
+      }
+    });
+    return btn;
+  });
+
+  contributorStack.replaceChildren(...buttons);
+}
+
+// Filter Dock (combines role filter & contributor clan spotlight!)
 function applyVillagerFilter(filter: string): void {
   activeFilter = filter;
   document.querySelectorAll<HTMLButtonElement>('.filter-pill[data-filter]').forEach((btn) => {
     btn.classList.toggle('is-active', btn.dataset.filter === filter);
   });
 
+  const hasRoleFilter = filter !== 'all';
+  const hasAuthorFilter = activeAuthorKey !== null;
+
   for (const v of villagers) {
-    const match = filter === 'all' || v.commit.kind === filter;
-    v.filterBeam.visible = filter !== 'all' && match;
-    (v.filterBeam.material as THREE.MeshBasicMaterial).opacity = match ? 0.24 : 0;
+    const roleMatch = !hasRoleFilter || v.commit.kind === filter;
+    const authorMatch = !hasAuthorFilter || v.authorKey === activeAuthorKey;
+    const showBeam = (hasRoleFilter || hasAuthorFilter) && roleMatch && authorMatch;
+    v.filterBeam.visible = showBeam;
+    (v.filterBeam.material as THREE.MeshBasicMaterial).opacity = showBeam ? 0.28 : 0;
     v.bodyGroup.visible = true;
   }
 }
@@ -1017,7 +1080,12 @@ function renderRosterPopover(): void {
   const grouped: Partial<Record<string, CommitData[]>> =
     rosterGroupMode === 'branch'
       ? Object.groupBy(commits, (c): string => c.branch)
-      : Object.groupBy(commits, (c): string => `@${c.authorLogin}`);
+      : Object.groupBy(commits, (c): string => {
+          const clan = clanMap.get(normalizeAuthorKey(c));
+          return clan
+            ? `${clan.emblem} ${clan.authorName} · ${clan.earLabel}`
+            : `@${c.authorLogin}`;
+        });
 
   for (const key of Object.keys(grouped)) {
     const list = grouped[key] ?? [];
@@ -1035,11 +1103,17 @@ function renderRosterPopover(): void {
       btn.type = 'button';
       btn.className = 'roster-row';
       const role = getRoleMeta(c.kind);
+      const clan = clanMap.get(normalizeAuthorKey(c));
 
       const subj = document.createElement('span');
       subj.className = 'roster-row-subj';
       const dot = document.createElement('span');
-      dot.className = `status-dot ${role.dotClass}`;
+      if (rosterGroupMode === 'branch' && clan) {
+        dot.className = 'status-dot';
+        dot.style.background = clan.colorCss;
+      } else {
+        dot.className = `status-dot ${role.dotClass}`;
+      }
       const msgTxt = document.createElement('span');
       msgTxt.textContent = c.subject;
       subj.append(dot, msgTxt);
@@ -1878,17 +1952,26 @@ function updateGateAndVisitors(dt: number, elapsed: number): void {
 
 function updateVillagers(dt: number, elapsed: number): void {
   const count = villagers.length;
+  const focusKinKey = (hoveredVillager ?? selectedVillager)?.authorKey ?? activeAuthorKey;
 
   for (let i = 0; i < count; i++) {
     const v = villagers[i];
     const isHovered = v === hoveredVillager;
     const isSelected = v === selectedVillager;
+    const isKinHighlighted = Boolean(focusKinKey && v.authorKey === focusKinKey);
 
+    // Persistent Clan Ring at rest (0.28), pulsing across ALL sibling commits of the focused contributor!
     const auraMat = v.auraRing.material as THREE.MeshBasicMaterial;
-    const targetOpacity = isSelected ? 0.92 : isHovered ? 0.65 : 0.0;
+    const targetOpacity = isSelected
+      ? 0.95
+      : isHovered
+        ? 0.85
+        : isKinHighlighted
+          ? 0.72
+          : 0.28;
     auraMat.opacity += (targetOpacity - auraMat.opacity) * Math.min(1, dt * 10);
-    if (isSelected) {
-      const pulse = 1 + Math.sin(elapsed * 5) * 0.1;
+    if (isSelected || isKinHighlighted) {
+      const pulse = 1 + Math.sin(elapsed * 5) * 0.11;
       v.auraRing.scale.setScalar(pulse);
     } else {
       v.auraRing.scale.setScalar(1);
