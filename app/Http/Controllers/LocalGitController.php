@@ -17,6 +17,7 @@ class LocalGitController extends Controller
         $rootsToScan = array_unique(array_filter([
             $cwd,
             $parent,
+            $home ? "{$home}/Documents/webprojects" : null,
             $home ? "{$home}/Desktop" : null,
             $home ? "{$home}/Projects" : null,
             $home ? "{$home}/Developer" : null,
@@ -127,6 +128,7 @@ class LocalGitController extends Controller
 
         $home = $this->homeDirectory();
         $candidateRoots = [
+            ['label' => 'webprojects', 'path' => $home ? "{$home}/Documents/webprojects" : ''],
             ['label' => 'Workspace', 'path' => dirname(base_path())],
             ['label' => 'Home', 'path' => $home],
             ['label' => 'Herd', 'path' => $home ? "{$home}/Herd" : ''],
