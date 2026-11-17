@@ -1,6 +1,13 @@
 /// <reference types="vite/client" />
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import {
+  type BrowserRepoSource,
+  createSourceFromDirectoryEntry,
+  createSourceFromDirectoryHandle,
+  createSourceFromFileList,
+  loadBrowserGitRepoVillage,
+} from './browserGitReader';
 import { createDemoRepoGraph } from './demoRepo';
 import { hydrateCommitDetail, loadGitHubRepoVillage, parseRepoInput } from './githubLoader';
 import {
@@ -131,9 +138,16 @@ const helpCloseBtn = document.getElementById('help-close-btn') as HTMLButtonElem
 const helpGotItBtn = document.getElementById('help-gotit-btn') as HTMLButtonElement;
 
 // Local Repository Picker Dialog DOM
+const presetsBrowserFolderBtn = document.getElementById(
+  'presets-browser-folder-btn',
+) as HTMLButtonElement | null;
 const localPickerDialog = document.getElementById('local-picker-dialog') as HTMLDialogElement;
 const localPickerCloseBtn = document.getElementById('local-picker-close-btn') as HTMLButtonElement;
 const nativeFinderBtn = document.getElementById('native-finder-btn') as HTMLButtonElement;
+const browserDropzone = document.getElementById('browser-dropzone') as HTMLDivElement;
+const browserPickFolderBtn = document.getElementById('browser-pick-folder-btn') as HTMLButtonElement;
+const browserFolderInput = document.getElementById('browser-folder-input') as HTMLInputElement;
+const serverPickerSections = document.getElementById('server-picker-sections') as HTMLDivElement;
 const pickerPathForm = document.getElementById('picker-path-form') as HTMLFormElement;
 const pickerPathInput = document.getElementById('picker-path-input') as HTMLInputElement;
 const discoveredCountLabel = document.getElementById('discovered-count-label') as HTMLSpanElement;
@@ -1342,11 +1356,154 @@ async function loadPickerDirectory(targetPath?: string): Promise<void> {
   }
 }
 
+let activeBrowserSource: BrowserRepoSource | null = null;
+
+async function loadBrowserRepoSource(source: BrowserRepoSource): Promise<void> {
+  currentLoadController?.abort();
+  loadBtn.disabled = true;
+  showToast(`Reading local Git repository "${source.rootName}"…`, false, 0);
+
+  try {
+    const graph = await loadBrowserGitRepoVillage(source);
+    activeBrowserSource = source;
+    const waitingCount = graph.gateVisitors?.length ?? 0;
+    rebuildVillageFromGraph(graph, { focusGateOnLoad: waitingCount > 0 });
+    repoInput.value = graph.repo;
+    sound.playRepoLoaded();
+
+    const url = new URL(window.location.href);
+    url.searchParams.delete('repo');
+    url.searchParams.delete('local');
+    window.history.replaceState({}, '', url);
+
+    if (waitingCount > 0) {
+      showToast(
+        `${graph.repo} — ${waitingCount} uncommitted file${waitingCount === 1 ? '' : 's'} waiting at the Village Gate`,
+      );
+      if (gateVisitors.length > 0) {
+        focusOnGateVisitor(gateVisitors[0], false, false);
+      }
+    } else {
+      showToast(`${graph.repo} — ${villagers.length} commits loaded privately in browser`);
+    }
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : 'Could not parse local Git repository folder.';
+    showToast(message, true, 6500);
+  } finally {
+    loadBtn.disabled = false;
+  }
+}
+
+async function triggerBrowserFolderPicker(): Promise<void> {
+  const winWithPicker = window as Window & {
+    showDirectoryPicker?: (opts?: { mode?: 'read' }) => Promise<FileSystemDirectoryHandle>;
+  };
+
+  if (typeof winWithPicker.showDirectoryPicker === 'function') {
+    try {
+      const dirHandle = await winWithPicker.showDirectoryPicker({ mode: 'read' });
+      await closeTopLayerDialog(localPickerDialog);
+      await loadBrowserRepoSource(createSourceFromDirectoryHandle(dirHandle));
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      const msg = err instanceof Error ? err.message : 'Could not open folder.';
+      showToast(msg, true);
+    }
+    return;
+  }
+
+  browserFolderInput.value = '';
+  browserFolderInput.click();
+}
+
+browserPickFolderBtn.addEventListener('click', () => {
+  triggerBrowserFolderPicker();
+});
+
+presetsBrowserFolderBtn?.addEventListener('click', () => {
+  presetsPopover.hidePopover?.();
+  openLocalPickerModal();
+});
+
+browserFolderInput.addEventListener('change', async () => {
+  if (!browserFolderInput.files || browserFolderInput.files.length === 0) return;
+  const source = createSourceFromFileList(browserFolderInput.files);
+  await closeTopLayerDialog(localPickerDialog);
+  await loadBrowserRepoSource(source);
+});
+
+async function handleDroppedDataTransfer(dt: DataTransfer | null): Promise<boolean> {
+  if (!dt?.items || dt.items.length === 0) return false;
+  const firstItem = dt.items[0] as DataTransferItem & {
+    getAsFileSystemHandle?: () => Promise<FileSystemHandle | null>;
+  };
+
+  if (typeof firstItem.getAsFileSystemHandle === 'function') {
+    try {
+      const handle = await firstItem.getAsFileSystemHandle();
+      if (handle && handle.kind === 'directory') {
+        await closeTopLayerDialog(localPickerDialog);
+        await loadBrowserRepoSource(
+          createSourceFromDirectoryHandle(handle as FileSystemDirectoryHandle),
+        );
+        return true;
+      }
+    } catch {
+      // fall through to webkitGetAsEntry
+    }
+  }
+
+  const entry = firstItem.webkitGetAsEntry?.();
+  if (entry?.isDirectory) {
+    await closeTopLayerDialog(localPickerDialog);
+    await loadBrowserRepoSource(createSourceFromDirectoryEntry(entry as FileSystemDirectoryEntry));
+    return true;
+  }
+
+  if (dt.files && dt.files.length > 0) {
+    await closeTopLayerDialog(localPickerDialog);
+    await loadBrowserRepoSource(createSourceFromFileList(dt.files));
+    return true;
+  }
+  return false;
+}
+
+browserDropzone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  browserDropzone.classList.add('is-dragover');
+});
+browserDropzone.addEventListener('dragleave', () => {
+  browserDropzone.classList.remove('is-dragover');
+});
+browserDropzone.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  browserDropzone.classList.remove('is-dragover');
+  await handleDroppedDataTransfer(e.dataTransfer);
+});
+
+window.addEventListener('dragover', (e) => {
+  if (e.dataTransfer?.types.includes('Files')) {
+    e.preventDefault();
+  }
+});
+window.addEventListener('drop', async (e) => {
+  if (e.defaultPrevented) return;
+  if (e.dataTransfer?.types.includes('Files')) {
+    e.preventDefault();
+    await handleDroppedDataTransfer(e.dataTransfer);
+  }
+});
+
 function openLocalPickerModal(): void {
   sound.playPop(523.25);
   localPickerDialog.showModal();
-  refreshDiscoveredLocalRepos();
-  loadPickerDirectory(activeBrowseDirPath ?? activeGraph.localPath);
+  if (import.meta.env.DEV) {
+    serverPickerSections.hidden = false;
+    nativeFinderBtn.hidden = false;
+    refreshDiscoveredLocalRepos();
+    loadPickerDirectory(activeBrowseDirPath ?? activeGraph.localPath);
+  }
 }
 
 pickerHiddenCheckbox.addEventListener('change', () => {
@@ -1394,13 +1551,18 @@ nativeFinderBtn.addEventListener('click', async () => {
 });
 
 presetsPopover.addEventListener('beforetoggle', (e) => {
-  if ((e as ToggleEvent).newState === 'open' && !presetsLocalSection.hidden) {
+  if ((e as ToggleEvent).newState === 'open' && import.meta.env.DEV) {
     refreshDiscoveredLocalRepos();
   }
 });
 
 // Load a Local Git Repository
 async function loadLocalRepo(pathSpec: string, updateUrl = true): Promise<void> {
+  if (!import.meta.env.DEV) {
+    openLocalPickerModal();
+    return;
+  }
+  activeBrowserSource = null;
   currentLoadController?.abort();
   const controller = new AbortController();
   currentLoadController = controller;
@@ -1443,10 +1605,13 @@ async function loadLocalRepo(pathSpec: string, updateUrl = true): Promise<void> 
 // Live Polling for Local Git Working-Tree Changes
 let isPollingLocal = false;
 async function pollLocalRepoNow(manualFeedback = false): Promise<void> {
-  if (!activeGraph.isLocal || !activeGraph.localPath || isPollingLocal) return;
+  if (!activeGraph.isLocal || isPollingLocal) return;
+  if (!activeBrowserSource?.dirHandle && (!import.meta.env.DEV || !activeGraph.localPath)) return;
   isPollingLocal = true;
   try {
-    const freshGraph = await loadLocalRepoVillage(activeGraph.localPath);
+    const freshGraph = activeBrowserSource?.dirHandle
+      ? await loadBrowserGitRepoVillage(activeBrowserSource)
+      : await loadLocalRepoVillage(activeGraph.localPath!);
     const freshFp = computeLocalGraphFingerprint(freshGraph);
 
     if (freshFp !== lastLocalFingerprint) {
@@ -1493,6 +1658,7 @@ async function loadRepoBySpec(spec: string, updateUrl = true): Promise<void> {
   }
 
   currentLoadController?.abort();
+  activeBrowserSource = null;
   if (spec === 'demo' || spec === 'git-archipelago/sky-village') {
     const demo = createDemoRepoGraph();
     rebuildVillageFromGraph(demo);
@@ -2337,8 +2503,6 @@ const initialLocal = initialParams.get('local');
 const initialRepo = initialParams.get('repo');
 
 if (import.meta.env.DEV) {
-  localQuickBtn.hidden = false;
-  presetsLocalSection.hidden = false;
   repoInput.placeholder = 'GitHub owner/repo or local path…';
 }
 

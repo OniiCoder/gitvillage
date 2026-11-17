@@ -335,7 +335,6 @@
             id="local-quick-btn"
             class="tb-btn"
             title="Choose a local Git repository"
-            hidden
           >
             <svg class="sf-icon" width="15" height="15" aria-hidden="true"><use href="#sf-folder" /></svg>
             <span>Local…</span>
@@ -425,15 +424,15 @@
 
     <!-- Presets & Token Popover Sheet -->
     <div id="presets-popover" class="apple-sheet hud-popover" popover aria-label="Repositories">
-      <div id="presets-local-section" class="sheet-section" hidden>
+      <div id="presets-local-section" class="sheet-section">
         <div class="section-heading-row">
           <h3>Local Repositories</h3>
           <span class="section-caption">Uncommitted files queue at the Village Gate</span>
         </div>
         <div id="local-repos-grid" class="preset-grid">
-          <button type="button" class="preset-card" data-local=".">
-            <strong>Current Workspace</strong>
-            <span>Inspect local git status &amp; gate visitors</span>
+          <button type="button" id="presets-browser-folder-btn" class="preset-card">
+            <strong>Choose Repository Folder…</strong>
+            <span>Inspect any Git folder on your device · private in browser</span>
           </button>
         </div>
       </div>
@@ -625,7 +624,7 @@
       <div class="sheet-header-bar">
         <div>
           <h2 id="local-picker-title" class="dialog-title">Open Local Repository</h2>
-          <span class="section-caption">Choose any Git folder on your Mac to inspect commits and Gate Visitors</span>
+          <span class="section-caption">Choose any Git folder on your device to inspect commits and Gate Visitors</span>
         </div>
         <div class="picker-top-actions">
           <button
@@ -633,6 +632,7 @@
             id="native-finder-btn"
             class="sheet-btn sheet-btn-tinted"
             title="Choose folder in macOS Finder"
+            hidden
           >
             <svg class="sf-icon" width="14" height="14" aria-hidden="true"><use href="#sf-folder" /></svg>
             <span>Finder…</span>
@@ -648,53 +648,72 @@
         </div>
       </div>
 
-      <form id="picker-path-form" class="picker-path-form" autocomplete="off">
-        <label for="picker-path-input" class="sr-only">Local folder path or search</label>
-        <div class="spotlight-input-wrap">
-          <svg class="sf-icon search-lead-icon" width="15" height="15" aria-hidden="true">
-            <use href="#sf-search" />
-          </svg>
-          <input
-            id="picker-path-input"
-            type="text"
-            placeholder="Filter repositories or enter path (~/Projects/app)…"
-            spellcheck="false"
-          />
+      <!-- Universal 100% Client-Side Browser Folder Picker & Dropzone (works on shared links too) -->
+      <div id="browser-dropzone" class="browser-dropzone">
+        <div class="browser-dropzone-copy">
+          <span class="dropzone-glyph" aria-hidden="true">
+            <svg class="sf-icon" width="18" height="18"><use href="#sf-folder" /></svg>
+          </span>
+          <div>
+            <strong>Select or Drop a Git Repository Folder</strong>
+            <span>Reads commits, branches, and uncommitted Gate Visitors privately in your browser — zero upload.</span>
+          </div>
         </div>
-        <button type="submit" class="apple-primary-btn">Open</button>
-      </form>
-
-      <div class="picker-section-label">
-        <span>Discovered on This Mac</span>
-        <span id="discovered-count-label" class="section-caption">Scanning…</span>
-      </div>
-      <div id="picker-discovered-grid" class="preset-grid"></div>
-
-      <div class="picker-section-label">
-        <span>Folders</span>
-        <label class="hidden-toggle-label">
-          <input type="checkbox" id="picker-hidden-checkbox" />
-          <span>Show hidden</span>
-        </label>
-      </div>
-
-      <div id="picker-roots" class="picker-roots"></div>
-
-      <nav class="folder-breadcrumb" aria-label="Folder path breadcrumbs">
-        <ol id="picker-breadcrumbs"></ol>
-      </nav>
-
-      <div id="picker-current-git-banner" class="current-git-banner" hidden>
-        <div class="banner-copy">
-          <strong id="picker-current-git-title">Git repository detected</strong>
-          <span id="picker-current-git-sub">Branch: main</span>
-        </div>
-        <button type="button" id="picker-load-current-btn" class="apple-primary-btn">
-          Open Village
+        <button type="button" id="browser-pick-folder-btn" class="apple-primary-btn">
+          Choose Folder…
         </button>
+        <input id="browser-folder-input" type="file" webkitdirectory multiple hidden />
       </div>
 
-      <div id="picker-folder-list" class="inset-list folder-browser-list"></div>
+      <div id="server-picker-sections" hidden>
+        <form id="picker-path-form" class="picker-path-form" autocomplete="off">
+          <label for="picker-path-input" class="sr-only">Local folder path or search</label>
+          <div class="spotlight-input-wrap">
+            <svg class="sf-icon search-lead-icon" width="15" height="15" aria-hidden="true">
+              <use href="#sf-search" />
+            </svg>
+            <input
+              id="picker-path-input"
+              type="text"
+              placeholder="Filter repositories or enter path (~/Projects/app)…"
+              spellcheck="false"
+            />
+          </div>
+          <button type="submit" class="apple-primary-btn">Open</button>
+        </form>
+
+        <div class="picker-section-label">
+          <span>Discovered on This Mac</span>
+          <span id="discovered-count-label" class="section-caption">Scanning…</span>
+        </div>
+        <div id="picker-discovered-grid" class="preset-grid"></div>
+
+        <div class="picker-section-label">
+          <span>Folders</span>
+          <label class="hidden-toggle-label">
+            <input type="checkbox" id="picker-hidden-checkbox" />
+            <span>Show hidden</span>
+          </label>
+        </div>
+
+        <div id="picker-roots" class="picker-roots"></div>
+
+        <nav class="folder-breadcrumb" aria-label="Folder path breadcrumbs">
+          <ol id="picker-breadcrumbs"></ol>
+        </nav>
+
+        <div id="picker-current-git-banner" class="current-git-banner" hidden>
+          <div class="banner-copy">
+            <strong id="picker-current-git-title">Git repository detected</strong>
+            <span id="picker-current-git-sub">Branch: main</span>
+          </div>
+          <button type="button" id="picker-load-current-btn" class="apple-primary-btn">
+            Open Village
+          </button>
+        </div>
+
+        <div id="picker-folder-list" class="inset-list folder-browser-list"></div>
+      </div>
     </dialog>
 
     <!-- Village Field Guide Modal Sheet -->
