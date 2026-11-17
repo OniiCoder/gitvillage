@@ -84,10 +84,10 @@ export function createDemoRepoGraph(): RepoVillageGraph {
       authorName: 'Tali Okafor',
       minutesAgo: 60 * 70,
       subject: 'docs: carve island signpost runes and newcomer map legend',
-      body: 'Documents branch bridge topology, commit hat meanings, and keyboard shortcuts for walking around the archipelago.',
+      body: 'Documents branch bridge topology, commit hat meanings, and keyboard shortcuts for walking around GitVillage.',
       files: [
         { filename: 'README.md', status: 'added', additions: 128, deletions: 0 },
-        { filename: 'docs/archipelago-lore.md', status: 'added', additions: 64, deletions: 0 },
+        { filename: 'docs/gitvillage-lore.md', status: 'added', additions: 64, deletions: 0 },
       ],
     },
     // Branch 1: feat/cloud-windmills forks from m3 and merges into m6
@@ -426,7 +426,7 @@ export function createDemoRepoGraph(): RepoVillageGraph {
   });
 
   return {
-    owner: 'git-archipelago',
+    owner: 'gitvillage',
     repo: 'sky-village',
     description: 'Built-in interactive demo repo — click any commit villager or paste any public GitHub repo above!',
     defaultBranch: 'main',

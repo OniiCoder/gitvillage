@@ -43,7 +43,7 @@ class VillageController extends Controller
         return [
             [
                 'slug' => 'demo',
-                'title' => 'git-archipelago/sky-village',
+                'title' => 'gitvillage/sky-village',
                 'subtitle' => 'Built-in showcase · 5 branch islands & bridges',
             ],
             [

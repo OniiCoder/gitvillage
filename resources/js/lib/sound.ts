@@ -1,4 +1,4 @@
-// Procedural Web Audio soundscape & subtle generative background music for Git Archipelago
+// Procedural Web Audio soundscape & subtle generative background music for GitVillage
 import type { TimeOfDay } from '@/types/village';
 
 interface ChordVoicing {

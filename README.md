@@ -1,4 +1,4 @@
-# Git Archipelago
+# GitVillage
 
 Turn any Git repository into a living 3D floating-island village — built with **Laravel**, **Inertia.js**, **React**, **TypeScript**, and **Three.js**.
 

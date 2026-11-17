@@ -446,7 +446,7 @@ function buildSuspensionBridge(
   return { group, curve };
 }
 
-export function buildArchipelagoWorld(graph: RepoVillageGraph): BuiltWorld {
+export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
   const worldGroup = new THREE.Group();
   const islands: IslandLayout[] = [];
   const bridges: BridgeLayout[] = [];

@@ -24,7 +24,7 @@ import {
   normalizeAuthorKey,
   refreshVillagerCargo,
 } from '@/lib/villagerMesh';
-import { type BuiltWorld, buildArchipelagoWorld } from '@/lib/worldBuilder';
+import { type BuiltWorld, buildVillageWorld } from '@/lib/worldBuilder';
 import type {
   BridgeLayout,
   CameraMode,
@@ -629,7 +629,7 @@ export class VillageEngine {
     this.emoteElements.clear();
 
     this.clanMap = buildContributorClanMap(graph.commitsBySha.values());
-    this.builtWorld = buildArchipelagoWorld(graph);
+    this.builtWorld = buildVillageWorld(graph);
     this.scene.add(this.builtWorld.worldGroup);
 
     const islandByBranch = new Map<string, IslandLayout>();
@@ -835,14 +835,14 @@ export class VillageEngine {
     this.currentLoadController?.abort();
     this.activeBrowserSource = null;
 
-    if (spec === 'demo' || spec === 'git-archipelago/sky-village') {
+    if (spec === 'demo' || spec === 'gitvillage/sky-village') {
       const demo = createDemoRepoGraph();
       this.rebuildVillageFromGraph(demo);
       sound.playRepoLoaded();
       if (updateUrl) {
         this.cb.onSyncUrl({ repo: null, local: null });
       }
-      this.cb.onToast('Showcase Village — git-archipelago/sky-village');
+      this.cb.onToast('Showcase Village — gitvillage/sky-village');
       return;
     }
 

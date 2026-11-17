@@ -113,10 +113,10 @@ export function SpatialTopbar({
     <header className="spatial-topbar">
       <div className="brand-cluster">
         <span className="brand-glyph" aria-hidden="true">
-          <SfIcon name="sf-archipelago" size={16} />
+          <SfIcon name="sf-village" size={16} />
         </span>
         <div className="brand-meta">
-          <span className="brand-name">Archipelago</span>
+          <span className="brand-name">GitVillage</span>
           <span id="repo-stats-pill" className="stats-pill">
             {statsLabel}
           </span>

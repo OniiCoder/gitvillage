@@ -17,7 +17,7 @@ export function FieldGuideDialog() {
       <div className="sheet-header-bar">
         <div>
           <h2 id="help-title" className="dialog-title">
-            Git Archipelago Field Guide
+            GitVillage Field Guide
           </h2>
           <span className="section-caption">
             Every commit lives as an autonomous citizen on its branch island

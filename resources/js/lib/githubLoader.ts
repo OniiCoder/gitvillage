@@ -284,7 +284,7 @@ export async function loadGitHubRepoVillage(
   return {
     owner: repoMeta.owner.login,
     repo: repoMeta.name,
-    description: repoMeta.description || `Floating commit archipelago for ${repoMeta.owner.login}/${repoMeta.name}`,
+    description: repoMeta.description || `Floating 3D commit village for ${repoMeta.owner.login}/${repoMeta.name}`,
     defaultBranch,
     stars: repoMeta.stargazers_count ?? 0,
     isDemo: false,
