@@ -255,6 +255,16 @@
           stroke-linejoin="round"
         />
       </symbol>
+      <symbol id="sf-share" viewBox="0 0 20 20">
+        <path
+          d="M10 3.2v9.2M6.8 6.2 10 3l3.2 3.2M5.2 10.5v4.7a1.8 1.8 0 0 0 1.8 1.8h6a1.8 1.8 0 0 0 1.8-1.8v-4.7"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.65"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </symbol>
     </svg>
 
     <!-- Full-viewport 3D Canvas -->
@@ -387,6 +397,15 @@
           </button>
           <button
             type="button"
+            id="share-btn"
+            class="tb-btn tb-icon-only"
+            aria-label="Copy shareable link"
+            title="Copy shareable link"
+          >
+            <svg class="sf-icon" width="15" height="15" aria-hidden="true"><use href="#sf-share" /></svg>
+          </button>
+          <button
+            type="button"
             id="help-btn"
             class="tb-btn tb-icon-only"
             aria-label="Open Village Field Guide"
@@ -398,12 +417,14 @@
       </div>
     </header>
 
+    <!-- Always-present live region outside toolbar for reliable screen-reader action feedback -->
+    <p id="toolbar-status" class="sr-only" role="status"></p>
     <!-- Non-intrusive Status Pill Notification -->
-    <div id="toast-banner" class="toast-banner" role="status" aria-live="polite" hidden></div>
+    <div id="toast-banner" class="toast-banner" aria-hidden="true" hidden></div>
 
     <!-- Presets & Token Popover Sheet -->
     <div id="presets-popover" class="apple-sheet hud-popover" popover aria-label="Repositories">
-      <div class="sheet-section">
+      <div id="presets-local-section" class="sheet-section">
         <div class="section-heading-row">
           <h3>Local Repositories</h3>
           <span class="section-caption">Uncommitted files queue at the Village Gate</span>

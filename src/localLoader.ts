@@ -41,10 +41,23 @@ export function isLocalPathInput(raw: string): boolean {
   );
 }
 
+export async function checkLocalServerAvailable(): Promise<boolean> {
+  try {
+    const res = await fetch('/api/local-repos', { signal: AbortSignal.timeout(2500) });
+    if (!res.ok) return false;
+    const ct = res.headers.get('content-type') ?? '';
+    return ct.includes('application/json');
+  } catch {
+    return false;
+  }
+}
+
 export async function discoverLocalRepos(): Promise<DiscoveredLocalRepo[]> {
   try {
     const res = await fetch('/api/local-repos', { signal: AbortSignal.timeout(5000) });
-    if (!res.ok) return [];
+    if (!res.ok || !(res.headers.get('content-type') ?? '').includes('application/json')) {
+      return [];
+    }
     const data = (await res.json()) as { repos?: DiscoveredLocalRepo[] };
     return data.repos ?? [];
   } catch {

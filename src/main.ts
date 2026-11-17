@@ -5,6 +5,7 @@ import { hydrateCommitDetail, loadGitHubRepoVillage, parseRepoInput } from './gi
 import {
   type DiscoveredLocalRepo,
   browseLocalDirectory,
+  checkLocalServerAvailable,
   discoverLocalRepos,
   hydrateLocalCommitDetail,
   isLocalPathInput,
@@ -106,8 +107,10 @@ const repoInput = document.getElementById('repo-input') as HTMLInputElement;
 const loadBtn = document.getElementById('load-btn') as HTMLButtonElement;
 const mainToolbar = document.getElementById('main-toolbar') as HTMLDivElement;
 const localQuickBtn = document.getElementById('local-quick-btn') as HTMLButtonElement;
+const presetsLocalSection = document.getElementById('presets-local-section') as HTMLDivElement;
 const localReposGrid = document.getElementById('local-repos-grid') as HTMLDivElement;
 const tokenInput = document.getElementById('gh-token-input') as HTMLInputElement;
+const toolbarStatus = document.getElementById('toolbar-status') as HTMLParagraphElement;
 const toastBanner = document.getElementById('toast-banner') as HTMLDivElement;
 
 const presetsPopover = document.getElementById('presets-popover') as HTMLElement;
@@ -121,6 +124,7 @@ const skyBtn = document.getElementById('sky-btn') as HTMLButtonElement;
 const skyIconUse = document.getElementById('sky-icon-use') as unknown as SVGUseElement;
 const soundBtn = document.getElementById('sound-btn') as HTMLButtonElement;
 const soundIconUse = document.getElementById('sound-icon-use') as unknown as SVGUseElement;
+const shareBtn = document.getElementById('share-btn') as HTMLButtonElement;
 const helpBtn = document.getElementById('help-btn') as HTMLButtonElement;
 const helpDialog = document.getElementById('help-dialog') as HTMLDialogElement;
 const helpCloseBtn = document.getElementById('help-close-btn') as HTMLButtonElement;
@@ -189,26 +193,27 @@ if (!('focusGroup' in HTMLElement.prototype)) {
     }
   });
   mainToolbar.addEventListener('keydown', (e) => {
+    const visibleItems = toolbarItems.filter((b) => !b.hidden);
     const active = document.activeElement;
     if (!(active instanceof HTMLButtonElement)) return;
-    const idx = toolbarItems.indexOf(active);
+    const idx = visibleItems.indexOf(active);
     if (idx < 0) return;
 
     const rtl = getComputedStyle(mainToolbar).direction === 'rtl';
     let nextIdx: number | null = null;
     if (e.key === 'ArrowRight') {
-      nextIdx = (idx + (rtl ? -1 : 1) + toolbarItems.length) % toolbarItems.length;
+      nextIdx = (idx + (rtl ? -1 : 1) + visibleItems.length) % visibleItems.length;
     } else if (e.key === 'ArrowLeft') {
-      nextIdx = (idx + (rtl ? 1 : -1) + toolbarItems.length) % toolbarItems.length;
+      nextIdx = (idx + (rtl ? 1 : -1) + visibleItems.length) % visibleItems.length;
     } else if (e.key === 'Home') {
       nextIdx = 0;
     } else if (e.key === 'End') {
-      nextIdx = toolbarItems.length - 1;
+      nextIdx = visibleItems.length - 1;
     }
 
     if (nextIdx !== null) {
       e.preventDefault();
-      toolbarItems[nextIdx].focus();
+      visibleItems[nextIdx].focus();
     }
   });
 }
@@ -243,10 +248,11 @@ helpCloseBtn.addEventListener('click', () => closeTopLayerDialog(helpDialog));
 helpGotItBtn.addEventListener('click', () => closeTopLayerDialog(helpDialog));
 localPickerCloseBtn.addEventListener('click', () => closeTopLayerDialog(localPickerDialog));
 
-// Toast helper
+// Toast helper + always-present screen-reader status live region
 let toastTimer: number | undefined;
 function showToast(msg: string, isError = false, durationMs = 4200): void {
   window.clearTimeout(toastTimer);
+  toolbarStatus.textContent = msg;
   toastBanner.textContent = msg;
   toastBanner.classList.toggle('is-error', isError);
   toastBanner.hidden = false;
@@ -1599,6 +1605,28 @@ soundBtn.addEventListener('click', () => {
   soundIconUse.setAttribute('href', muted ? '#sf-speaker-mute' : '#sf-speaker');
 });
 
+shareBtn.addEventListener('click', async () => {
+  const shareUrl = new URL(window.location.href);
+  shareUrl.searchParams.delete('local');
+  if (!activeGraph.isDemo && !activeGraph.isLocal && activeGraph.owner && activeGraph.repo) {
+    shareUrl.searchParams.set('repo', `${activeGraph.owner}/${activeGraph.repo}`);
+  } else {
+    shareUrl.searchParams.delete('repo');
+  }
+
+  try {
+    await navigator.clipboard.writeText(shareUrl.toString());
+    sound.playPop(660);
+    showToast(
+      activeGraph.isLocal
+        ? 'Shareable village link copied (loads showcase for friends)'
+        : 'Shareable village link copied to clipboard',
+    );
+  } catch {
+    showToast('Copy failed — clipboard access unavailable', true);
+  }
+});
+
 function setCameraMode(mode: CameraMode): void {
   cameraMode = mode;
   const isWalk = mode === 'walk';
@@ -2310,9 +2338,24 @@ const initialRepo = initialParams.get('repo');
 rebuildVillageFromGraph(activeGraph);
 animate();
 
-if (initialLocal) {
-  loadLocalRepo(initialLocal, false);
-} else if (initialRepo) {
+checkLocalServerAvailable().then((localAvailable) => {
+  if (!localAvailable) {
+    localQuickBtn.hidden = true;
+    presetsLocalSection.hidden = true;
+    repoInput.placeholder = 'GitHub owner/repo or URL…';
+    if (!('focusGroup' in HTMLElement.prototype) && localQuickBtn.tabIndex === 0) {
+      localQuickBtn.tabIndex = -1;
+      const firstVisible = mainToolbar.querySelector<HTMLButtonElement>('button:not([hidden])');
+      if (firstVisible) firstVisible.tabIndex = 0;
+    }
+    return;
+  }
+  if (initialLocal) {
+    loadLocalRepo(initialLocal, false);
+  }
+});
+
+if (!initialLocal && initialRepo) {
   repoInput.value = initialRepo;
   loadRepoBySpec(initialRepo, false);
 }
