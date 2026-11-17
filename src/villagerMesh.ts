@@ -1,0 +1,706 @@
+import * as THREE from 'three';
+import type {
+  CommitData,
+  CommitKind,
+  GateVisitorEntity,
+  GateVisitorFile,
+  IslandLayout,
+  VillagerEntity,
+  WorkingTreeStatus,
+} from './types';
+
+const SKIN_TONES = [0xffdbac, 0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0xffcba4];
+const AUTHOR_HUES = [
+  0x3b82f6, 0xef4444, 0x10b981, 0xf59e0b, 0x8b5cf6, 0xec4899, 0x06b6d4, 0x84cc16, 0xf97316,
+  0x6366f1,
+];
+
+export function hashString(str: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+export function getAuthorColorHex(login: string): number {
+  return AUTHOR_HUES[hashString(login) % AUTHOR_HUES.length];
+}
+
+export function getRoleMeta(kind: CommitKind): {
+  title: string;
+  badge: string;
+  defaultEmotes: string[];
+} {
+  switch (kind) {
+    case 'feat':
+      return {
+        title: 'Master Builder',
+        badge: '✨ Feature',
+        defaultEmotes: ['✨', '🔨', '🚀', '💡'],
+      };
+    case 'fix':
+      return {
+        title: 'Bug Catcher',
+        badge: '🐛 Bugfix',
+        defaultEmotes: ['🐛', '🔧', '🎯', '🩹'],
+      };
+    case 'merge':
+      return {
+        title: 'Bridge Mayor',
+        badge: '🔀 Merge',
+        defaultEmotes: ['🎉', '🤝', '👑', '🎊'],
+      };
+    case 'docs':
+      return {
+        title: 'Lore Scribe',
+        badge: '📜 Docs',
+        defaultEmotes: ['📜', '✒️', '📖', '🔍'],
+      };
+    case 'refactor':
+      return {
+        title: 'Bonsai Gardener',
+        badge: '🧹 Refactor',
+        defaultEmotes: ['🌿', '🧹', '💎', '✂️'],
+      };
+    default:
+      return {
+        title: 'Clockwork Keeper',
+        badge: '⚙️ Chore',
+        defaultEmotes: ['⚙️', '📦', '🕯️', '👋'],
+      };
+  }
+}
+
+// Shared geometries for fast instancing/cloning
+const headGeo = new THREE.BoxGeometry(0.46, 0.44, 0.44);
+const torsoGeo = new THREE.CylinderGeometry(0.2, 0.26, 0.48, 8);
+const limbGeo = new THREE.CapsuleGeometry(0.068, 0.2, 4, 6);
+const eyeGeo = new THREE.BoxGeometry(0.06, 0.08, 0.04);
+const cheekGeo = new THREE.BoxGeometry(0.07, 0.04, 0.03);
+const auraGeo = new THREE.RingGeometry(0.38, 0.5, 24);
+auraGeo.rotateX(-Math.PI / 2);
+const beamGeo = new THREE.CylinderGeometry(0.32, 0.45, 5.5, 16, 1, true);
+beamGeo.translate(0, 2.75, 0);
+const hitBoxGeo = new THREE.CylinderGeometry(0.48, 0.48, 1.55, 8);
+hitBoxGeo.translate(0, 0.75, 0);
+
+const eyeMat = new THREE.MeshBasicMaterial({ color: 0x1e1b2e });
+const cheekMat = new THREE.MeshBasicMaterial({ color: 0xff8da1 });
+const hitBoxMat = new THREE.MeshBasicMaterial({ visible: false });
+
+function attachHatAndTool(
+  kind: CommitKind,
+  headGroup: THREE.Group,
+  rightArm: THREE.Group,
+  bodyGroup: THREE.Group,
+): void {
+  if (kind === 'feat') {
+    // Builder yellow hard-hat + glowing crystal hammer
+    const hatMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, roughness: 0.4 });
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2), hatMat);
+    dome.position.y = 0.18;
+    const brim = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.05, 0.58), hatMat);
+    brim.position.set(0, 0.19, 0.04);
+    headGroup.add(dome, brim);
+
+    // Hammer
+    const handle = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.025, 0.025, 0.42, 6),
+      new THREE.MeshStandardMaterial({ color: 0x78350f }),
+    );
+    handle.position.set(0, -0.22, 0.14);
+    handle.rotation.x = Math.PI / 3;
+    const gemHead = new THREE.Mesh(
+      new THREE.BoxGeometry(0.16, 0.12, 0.24),
+      new THREE.MeshStandardMaterial({
+        color: 0x38bdf8,
+        emissive: 0x0284c7,
+        emissiveIntensity: 0.5,
+      }),
+    );
+    gemHead.position.set(0, 0.18, 0);
+    handle.add(gemHead);
+    rightArm.add(handle);
+  } else if (kind === 'fix') {
+    // Bug-catcher safari pith hat + net!
+    const pithMat = new THREE.MeshStandardMaterial({ color: 0xfde68a, roughness: 0.7 });
+    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.38, 0.05, 12), pithMat);
+    brim.position.y = 0.21;
+    const top = new THREE.Mesh(new THREE.SphereGeometry(0.24, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2), pithMat);
+    top.position.y = 0.21;
+    const band = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.25, 0.25, 0.06, 12),
+      new THREE.MeshStandardMaterial({ color: 0xef4444 }),
+    );
+    band.position.y = 0.24;
+    headGroup.add(brim, top, band);
+
+    // Bug net
+    const pole = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.02, 0.02, 0.56, 6),
+      new THREE.MeshStandardMaterial({ color: 0x92400e }),
+    );
+    pole.position.set(0, -0.22, 0.18);
+    pole.rotation.x = Math.PI / 2.6;
+    const hoop = new THREE.Mesh(
+      new THREE.TorusGeometry(0.14, 0.02, 6, 14),
+      new THREE.MeshStandardMaterial({ color: 0xe2e8f0 }),
+    );
+    hoop.position.y = 0.34;
+    const meshBag = new THREE.Mesh(
+      new THREE.ConeGeometry(0.13, 0.24, 10, 1, true),
+      new THREE.MeshStandardMaterial({
+        color: 0xa7f3d0,
+        transparent: true,
+        opacity: 0.65,
+        side: THREE.DoubleSide,
+      }),
+    );
+    meshBag.position.set(0, 0.34, -0.11);
+    meshBag.rotation.x = -Math.PI / 2;
+    pole.add(hoop, meshBag);
+    rightArm.add(pole);
+  } else if (kind === 'merge') {
+    // Golden crown + royal cape + star scepter
+    const goldMat = new THREE.MeshStandardMaterial({
+      color: 0xfacc15,
+      metalness: 0.55,
+      roughness: 0.25,
+      emissive: 0xca8a04,
+      emissiveIntensity: 0.25,
+    });
+    const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.21, 0.18, 6), goldMat);
+    crown.position.y = 0.29;
+    headGroup.add(crown);
+
+    const cape = new THREE.Mesh(
+      new THREE.BoxGeometry(0.46, 0.5, 0.06),
+      new THREE.MeshStandardMaterial({ color: 0x9333ea, roughness: 0.6 }),
+    );
+    cape.position.set(0, 0.44, -0.22);
+    cape.rotation.x = 0.18;
+    bodyGroup.add(cape);
+
+    const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.62, 6), goldMat);
+    staff.position.set(0, -0.15, 0.14);
+    staff.rotation.x = Math.PI / 6;
+    const orb = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.1),
+      new THREE.MeshStandardMaterial({
+        color: 0xf472b6,
+        emissive: 0xec4899,
+        emissiveIntensity: 0.7,
+      }),
+    );
+    orb.position.y = 0.35;
+    staff.add(orb);
+    rightArm.add(staff);
+  } else if (kind === 'docs') {
+    // Scholar mortarboard + open scroll book
+    const capMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.6 });
+    const board = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.04, 0.54), capMat);
+    board.position.y = 0.25;
+    board.rotation.y = Math.PI / 4;
+    headGroup.add(board);
+
+    const book = new THREE.Mesh(
+      new THREE.BoxGeometry(0.24, 0.06, 0.18),
+      new THREE.MeshStandardMaterial({ color: 0xfef3c7 }),
+    );
+    book.position.set(0, -0.22, 0.12);
+    rightArm.add(book);
+  } else if (kind === 'refactor') {
+    // Gardener straw sun-hat + broom
+    const strawMat = new THREE.MeshStandardMaterial({ color: 0xfcd34d, roughness: 0.85 });
+    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.46, 0.03, 14), strawMat);
+    brim.position.y = 0.21;
+    const dome = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.25, 0.14, 12), strawMat);
+    dome.position.y = 0.27;
+    headGroup.add(brim, dome);
+
+    const broom = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.02, 0.02, 0.54, 6),
+      new THREE.MeshStandardMaterial({ color: 0x92400e }),
+    );
+    broom.position.set(0, -0.2, 0.12);
+    broom.rotation.x = Math.PI / 4;
+    const bristles = new THREE.Mesh(
+      new THREE.ConeGeometry(0.11, 0.2, 8),
+      strawMat,
+    );
+    bristles.position.y = -0.3;
+    broom.add(bristles);
+    rightArm.add(broom);
+  } else {
+    // Tinkerer beret + warm lantern
+    const beret = new THREE.Mesh(
+      new THREE.SphereGeometry(0.26, 10, 8),
+      new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.7 }),
+    );
+    beret.scale.set(1.05, 0.5, 1.05);
+    beret.position.set(0.03, 0.23, 0);
+    headGroup.add(beret);
+
+    const lantern = new THREE.Mesh(
+      new THREE.BoxGeometry(0.12, 0.16, 0.12),
+      new THREE.MeshStandardMaterial({
+        color: 0xfdba74,
+        emissive: 0xf97316,
+        emissiveIntensity: 0.8,
+      }),
+    );
+    lantern.position.set(0, -0.26, 0.1);
+    rightArm.add(lantern);
+  }
+}
+
+export function createVillagerEntity(
+  commit: CommitData,
+  island: IslandLayout,
+  indexOnIsland: number,
+  totalOnIsland: number,
+): VillagerEntity {
+  const seed = hashString(commit.sha);
+  const skinColor = SKIN_TONES[seed % SKIN_TONES.length];
+  const tunicColor = getAuthorColorHex(commit.authorLogin);
+
+  const root = new THREE.Group();
+  const bodyGroup = new THREE.Group();
+  root.add(bodyGroup);
+
+  const scaleBoost = commit.kind === 'merge' ? 1.18 : 0.94 + ((seed % 15) / 100);
+  bodyGroup.scale.setScalar(scaleBoost);
+
+  // Legs
+  const pantsMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.8 });
+  const leftLeg = new THREE.Group();
+  leftLeg.position.set(-0.11, 0.24, 0);
+  const leftLegMesh = new THREE.Mesh(limbGeo, pantsMat);
+  leftLegMesh.position.y = -0.1;
+  leftLegMesh.castShadow = true;
+  leftLeg.add(leftLegMesh);
+
+  const rightLeg = new THREE.Group();
+  rightLeg.position.set(0.11, 0.24, 0);
+  const rightLegMesh = new THREE.Mesh(limbGeo, pantsMat);
+  rightLegMesh.position.y = -0.1;
+  rightLegMesh.castShadow = true;
+  rightLeg.add(rightLegMesh);
+
+  bodyGroup.add(leftLeg, rightLeg);
+
+  // Torso
+  const torsoMat = new THREE.MeshStandardMaterial({ color: tunicColor, roughness: 0.65 });
+  const torso = new THREE.Mesh(torsoGeo, torsoMat);
+  torso.position.y = 0.48;
+  torso.castShadow = true;
+  bodyGroup.add(torso);
+
+  // Backpack sized slightly by diff impact
+  const diffTotal = commit.stats?.total ?? 40;
+  const packScale = Math.min(1.4, 0.75 + Math.log10(diffTotal + 10) * 0.25);
+  const pack = new THREE.Mesh(
+    new THREE.BoxGeometry(0.28 * packScale, 0.3 * packScale, 0.16 * packScale),
+    new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.85 }),
+  );
+  pack.position.set(0, 0.49, -0.22);
+  bodyGroup.add(pack);
+
+  // Arms
+  const skinMat = new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.7 });
+  const leftArm = new THREE.Group();
+  leftArm.position.set(-0.28, 0.64, 0);
+  const leftArmMesh = new THREE.Mesh(limbGeo, skinMat);
+  leftArmMesh.position.y = -0.12;
+  leftArmMesh.castShadow = true;
+  leftArm.add(leftArmMesh);
+
+  const rightArm = new THREE.Group();
+  rightArm.position.set(0.28, 0.64, 0);
+  const rightArmMesh = new THREE.Mesh(limbGeo, skinMat);
+  rightArmMesh.position.y = -0.12;
+  rightArmMesh.castShadow = true;
+  rightArm.add(rightArmMesh);
+
+  bodyGroup.add(leftArm, rightArm);
+
+  // Head
+  const headGroup = new THREE.Group();
+  headGroup.position.set(0, 0.94, 0);
+  const headMesh = new THREE.Mesh(headGeo, skinMat);
+  headMesh.castShadow = true;
+  headGroup.add(headMesh);
+
+  // Cute face on +Z
+  const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
+  leftEye.position.set(-0.1, 0.03, 0.225);
+  const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
+  rightEye.position.set(0.1, 0.03, 0.225);
+  const leftCheek = new THREE.Mesh(cheekGeo, cheekMat);
+  leftCheek.position.set(-0.15, -0.06, 0.222);
+  const rightCheek = new THREE.Mesh(cheekGeo, cheekMat);
+  rightCheek.position.set(0.15, -0.06, 0.222);
+  headGroup.add(leftEye, rightEye, leftCheek, rightCheek);
+
+  attachHatAndTool(commit.kind, headGroup, rightArm, bodyGroup);
+  bodyGroup.add(headGroup);
+
+  // Selection/hover ring on ground
+  const auraMat = new THREE.MeshBasicMaterial({
+    color: new THREE.Color(island.branch.color),
+    transparent: true,
+    opacity: 0.0,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const auraRing = new THREE.Mesh(auraGeo, auraMat);
+  auraRing.position.y = 0.04;
+  root.add(auraRing);
+
+  // Filter highlight beam
+  const beamMat = new THREE.MeshBasicMaterial({
+    color: new THREE.Color(island.branch.color),
+    transparent: true,
+    opacity: 0.0,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const filterBeam = new THREE.Mesh(beamGeo, beamMat);
+  filterBeam.visible = false;
+  root.add(filterBeam);
+
+  // Raycast hitbox
+  const hitBox = new THREE.Mesh(hitBoxGeo, hitBoxMat);
+  hitBox.userData.commitSha = commit.sha;
+  root.add(hitBox);
+
+  const pathT = totalOnIsland <= 1 ? 0.5 : 0.08 + (indexOnIsland / (totalOnIsland - 1)) * 0.84;
+  const homePos = island.pathCurve.getPointAt(Math.min(1, Math.max(0, pathT)));
+  root.position.copy(homePos);
+
+  return {
+    commit,
+    island,
+    root,
+    bodyGroup,
+    headGroup,
+    leftArm,
+    rightArm,
+    leftLeg,
+    rightLeg,
+    auraRing,
+    filterBeam,
+    hitBox,
+    homePos: homePos.clone(),
+    pathT,
+    pathDir: seed % 2 === 0 ? 1 : -1,
+    speed: 0.025 + ((seed % 20) / 1000),
+    behavior: seed % 3 === 0 ? 'jump_joy' : 'stroll',
+    behaviorTimer: 1.5 + ((seed % 40) / 10),
+    jumpPhase: (seed % 100) / 15,
+    jumpVelocity: 0,
+    jumpY: 0,
+    phaseOffset: (seed % 628) / 100,
+    emoteEmoji: '',
+    emoteTimer: 0,
+  };
+}
+
+export function createExplorerAvatar(): {
+  root: THREE.Group;
+  bodyGroup: THREE.Group;
+  leftLeg: THREE.Object3D;
+  rightLeg: THREE.Object3D;
+  leftArm: THREE.Object3D;
+  rightArm: THREE.Object3D;
+} {
+  const root = new THREE.Group();
+  const bodyGroup = new THREE.Group();
+  bodyGroup.scale.setScalar(1.08);
+  root.add(bodyGroup);
+
+  const bootsMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.7 });
+  const leftLeg = new THREE.Group();
+  leftLeg.position.set(-0.11, 0.24, 0);
+  const ll = new THREE.Mesh(limbGeo, bootsMat);
+  ll.position.y = -0.1;
+  leftLeg.add(ll);
+
+  const rightLeg = new THREE.Group();
+  rightLeg.position.set(0.11, 0.24, 0);
+  const rl = new THREE.Mesh(limbGeo, bootsMat);
+  rl.position.y = -0.1;
+  rightLeg.add(rl);
+
+  const coat = new THREE.Mesh(
+    torsoGeo,
+    new THREE.MeshStandardMaterial({ color: 0xf43f5e, roughness: 0.5 }),
+  );
+  coat.position.y = 0.48;
+  coat.castShadow = true;
+
+  // Adventurer scarf
+  const scarf = new THREE.Mesh(
+    new THREE.TorusGeometry(0.21, 0.055, 6, 14),
+    new THREE.MeshStandardMaterial({ color: 0xfef08a, roughness: 0.6 }),
+  );
+  scarf.rotation.x = Math.PI / 2;
+  scarf.position.y = 0.71;
+
+  const skinMat = new THREE.MeshStandardMaterial({ color: 0xffdbac, roughness: 0.65 });
+  const leftArm = new THREE.Group();
+  leftArm.position.set(-0.28, 0.64, 0);
+  const la = new THREE.Mesh(limbGeo, skinMat);
+  la.position.y = -0.12;
+  leftArm.add(la);
+
+  const rightArm = new THREE.Group();
+  rightArm.position.set(0.28, 0.64, 0);
+  const ra = new THREE.Mesh(limbGeo, skinMat);
+  ra.position.y = -0.12;
+  rightArm.add(ra);
+
+  const head = new THREE.Mesh(headGeo, skinMat);
+  head.position.y = 0.96;
+  head.castShadow = true;
+
+  const lEye = new THREE.Mesh(eyeGeo, eyeMat);
+  lEye.position.set(-0.1, 0.99, 0.225);
+  const rEye = new THREE.Mesh(eyeGeo, eyeMat);
+  rEye.position.set(0.1, 0.99, 0.225);
+
+  // Explorer hood/feather hat
+  const hatMat = new THREE.MeshStandardMaterial({ color: 0x0f766e, roughness: 0.6 });
+  const hat = new THREE.Mesh(new THREE.ConeGeometry(0.32, 0.36, 10), hatMat);
+  hat.position.set(0, 1.32, -0.02);
+  hat.rotation.x = -0.18;
+
+  const ring = new THREE.Mesh(
+    auraGeo,
+    new THREE.MeshBasicMaterial({
+      color: 0xfef08a,
+      transparent: true,
+      opacity: 0.85,
+      side: THREE.DoubleSide,
+    }),
+  );
+  ring.position.y = 0.05;
+  root.add(ring);
+
+  bodyGroup.add(leftLeg, rightLeg, coat, scarf, leftArm, rightArm, head, lEye, rEye, hat);
+  root.visible = false;
+
+  return { root, bodyGroup, leftLeg, rightLeg, leftArm, rightArm };
+}
+
+export function getVisitorStatusMeta(status: WorkingTreeStatus): {
+  label: string;
+  color: number;
+  emotes: string[];
+} {
+  switch (status) {
+    case 'untracked':
+      return { label: '🌱 New File (Untracked)', color: 0x10b981, emotes: ['🌱', '🆕', '🙋', '🔔'] };
+    case 'added':
+      return { label: '✨ Added File', color: 0x22c55e, emotes: ['✨', '🎫', '🚀', '🙌'] };
+    case 'deleted':
+      return { label: '📦 Deleted File', color: 0xf43f5e, emotes: ['📦', '👋', '🕊️'] };
+    case 'renamed':
+      return { label: '🏷️ Renamed File', color: 0xa855f7, emotes: ['🏷️', '🔀', '🙋'] };
+    default:
+      return { label: '✏️ Modified File', color: 0xf59e0b, emotes: ['✏️', '🔔', '👀', '🙋'] };
+  }
+}
+
+export function createGateVisitorEntity(
+  file: GateVisitorFile,
+  index: number,
+  queueSlot: THREE.Vector3,
+  rushTarget: THREE.Vector3,
+): GateVisitorEntity {
+  const seed = hashString(file.filename + index);
+  const skinColor = SKIN_TONES[seed % SKIN_TONES.length];
+  const meta = getVisitorStatusMeta(file.status);
+
+  const root = new THREE.Group();
+  const bodyGroup = new THREE.Group();
+  root.add(bodyGroup);
+
+  // Traveler legs
+  const pantsMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8 });
+  const leftLeg = new THREE.Group();
+  leftLeg.position.set(-0.11, 0.24, 0);
+  const leftLegMesh = new THREE.Mesh(limbGeo, pantsMat);
+  leftLegMesh.position.y = -0.1;
+  leftLegMesh.castShadow = true;
+  leftLeg.add(leftLegMesh);
+
+  const rightLeg = new THREE.Group();
+  rightLeg.position.set(0.11, 0.24, 0);
+  const rightLegMesh = new THREE.Mesh(limbGeo, pantsMat);
+  rightLegMesh.position.y = -0.1;
+  rightLegMesh.castShadow = true;
+  rightLeg.add(rightLegMesh);
+  bodyGroup.add(leftLeg, rightLeg);
+
+  // Traveler poncho / coat colored by working-tree status
+  const coatMat = new THREE.MeshStandardMaterial({ color: meta.color, roughness: 0.58 });
+  const torso = new THREE.Mesh(torsoGeo, coatMat);
+  torso.position.y = 0.48;
+  torso.castShadow = true;
+  bodyGroup.add(torso);
+
+  // Rolling Suitcase / Trunk beside the visitor, sized by line changes!
+  const lineTotal = file.additions + file.deletions;
+  const bagScale = Math.min(1.45, 0.78 + Math.log10(lineTotal + 8) * 0.28);
+  const suitcase = new THREE.Group();
+  const caseBox = new THREE.Mesh(
+    new THREE.BoxGeometry(0.24 * bagScale, 0.34 * bagScale, 0.18 * bagScale),
+    new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.78 }),
+  );
+  caseBox.position.y = 0.17 * bagScale;
+  caseBox.castShadow = true;
+  const handleBar = new THREE.Mesh(
+    new THREE.BoxGeometry(0.12, 0.16, 0.03),
+    new THREE.MeshStandardMaterial({ color: 0xcbd5e1 }),
+  );
+  handleBar.position.y = 0.38 * bagScale;
+  suitcase.add(caseBox, handleBar);
+  suitcase.position.set(-0.36, 0, -0.08);
+  suitcase.rotation.y = 0.25;
+  bodyGroup.add(suitcase);
+
+  // Arms
+  const skinMat = new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.7 });
+  const leftArm = new THREE.Group();
+  leftArm.position.set(-0.28, 0.64, 0);
+  const la = new THREE.Mesh(limbGeo, skinMat);
+  la.position.y = -0.12;
+  leftArm.add(la);
+
+  const rightArm = new THREE.Group();
+  rightArm.position.set(0.28, 0.64, 0);
+  const ra = new THREE.Mesh(limbGeo, skinMat);
+  ra.position.y = -0.12;
+  rightArm.add(ra);
+
+  // Rolled file scroll held eagerly in right hand!
+  const scroll = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.055, 0.055, 0.32, 8),
+    new THREE.MeshStandardMaterial({ color: 0xfef9c3, roughness: 0.6 }),
+  );
+  scroll.rotation.z = Math.PI / 2;
+  scroll.position.set(0.05, -0.22, 0.14);
+  rightArm.add(scroll);
+
+  bodyGroup.add(leftArm, rightArm);
+
+  // Head + Eager Face
+  const headGroup = new THREE.Group();
+  headGroup.position.set(0, 0.94, 0);
+  const headMesh = new THREE.Mesh(headGeo, skinMat);
+  headMesh.castShadow = true;
+  headGroup.add(headMesh);
+
+  const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
+  leftEye.position.set(-0.1, 0.03, 0.225);
+  const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
+  rightEye.position.set(0.1, 0.03, 0.225);
+  const leftCheek = new THREE.Mesh(cheekGeo, cheekMat);
+  leftCheek.position.set(-0.15, -0.06, 0.222);
+  const rightCheek = new THREE.Mesh(cheekGeo, cheekMat);
+  rightCheek.position.set(0.15, -0.06, 0.222);
+  headGroup.add(leftEye, rightEye, leftCheek, rightCheek);
+
+  // Traveler cap / sprout
+  if (file.status === 'untracked' || file.status === 'added') {
+    const stem = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.02, 0.02, 0.18, 5),
+      new THREE.MeshStandardMaterial({ color: 0x16a34a }),
+    );
+    stem.position.y = 0.29;
+    const leaf = new THREE.Mesh(
+      new THREE.SphereGeometry(0.11, 8, 6),
+      new THREE.MeshStandardMaterial({ color: 0x4ade80 }),
+    );
+    leaf.scale.set(1.4, 0.45, 0.8);
+    leaf.position.set(0.08, 0.37, 0);
+    leaf.rotation.z = -0.35;
+    headGroup.add(stem, leaf);
+  } else {
+    const cap = new THREE.Mesh(
+      new THREE.SphereGeometry(0.25, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+      coatMat,
+    );
+    cap.position.y = 0.18;
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.04, 0.22), coatMat);
+    visor.position.set(0, 0.2, 0.2);
+    headGroup.add(cap, visor);
+  }
+
+  bodyGroup.add(headGroup);
+
+  // Floating Golden Gate Ticket above Staged (`git add`) visitors!
+  let ticketMesh: THREE.Object3D | undefined;
+  if (file.staged) {
+    const ticket = new THREE.Mesh(
+      new THREE.BoxGeometry(0.28, 0.16, 0.04),
+      new THREE.MeshStandardMaterial({
+        color: 0xfef08a,
+        emissive: 0xf59e0b,
+        emissiveIntensity: 0.9,
+        metalness: 0.4,
+        roughness: 0.2,
+      }),
+    );
+    ticket.position.y = 1.58;
+    bodyGroup.add(ticket);
+    ticketMesh = ticket;
+  }
+
+  // Ground ring (gold for staged, sky-cyan/amber for unstaged)
+  const auraMat = new THREE.MeshBasicMaterial({
+    color: file.staged ? 0xfacc15 : meta.color,
+    transparent: true,
+    opacity: file.staged ? 0.55 : 0.22,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const auraRing = new THREE.Mesh(auraGeo, auraMat);
+  auraRing.position.y = 0.04;
+  root.add(auraRing);
+
+  const hitBox = new THREE.Mesh(hitBoxGeo, hitBoxMat);
+  hitBox.userData.visitorIndex = index;
+  root.add(hitBox);
+
+  root.position.copy(queueSlot);
+  // Face -X toward the Village Gate!
+  bodyGroup.rotation.y = -Math.PI / 2;
+
+  return {
+    file,
+    index,
+    root,
+    bodyGroup,
+    headGroup,
+    leftArm,
+    rightArm,
+    leftLeg,
+    rightLeg,
+    ticketMesh,
+    auraRing,
+    hitBox,
+    queueSlot: queueSlot.clone(),
+    rushTarget: rushTarget.clone(),
+    jumpY: 0,
+    jumpVelocity: 0,
+    phaseOffset: (seed % 628) / 100,
+    hopTimer: 0.4 + ((seed % 25) / 10),
+    emoteEmoji: '',
+    emoteTimer: 0,
+  };
+}
