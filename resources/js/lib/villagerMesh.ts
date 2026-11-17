@@ -851,8 +851,9 @@ export function createVillagerEntity(
   root.add(hitBox);
 
   const pathT = totalOnIsland <= 1 ? 0.5 : 0.08 + (indexOnIsland / (totalOnIsland - 1)) * 0.84;
+  const baseLane = ((indexOnIsland % 3) - 1) * 0.54;
   const homePos = island.pathCurve.getPointAt(Math.min(1, Math.max(0, pathT)));
-  root.position.copy(homePos);
+  root.position.set(homePos.x, homePos.y, homePos.z + baseLane);
 
   const entity: VillagerEntity = {
     commit,
@@ -875,6 +876,15 @@ export function createVillagerEntity(
     pathT,
     pathDir: seed % 2 === 0 ? 1 : -1,
     speed: (0.028 + ((seed % 16) / 1000)) * (1 - burden * 0.42),
+    collisionRadius: 0.45 + burden * 0.09,
+    baseLane,
+    lateralOffset: baseLane,
+    bumpVelX: 0,
+    bumpVelZ: 0,
+    bumpTiltX: 0,
+    bumpTiltZ: 0,
+    bumpCooldown: 0,
+    yieldTimer: 0,
     behavior: seed % 3 === 0 ? 'jump_joy' : 'stroll',
     behaviorTimer: 1.5 + ((seed % 40) / 10),
     jumpPhase: (seed % 100) / 15,

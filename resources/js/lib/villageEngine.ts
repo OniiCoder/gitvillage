@@ -675,6 +675,11 @@ export class VillageEngine {
     this.applyAtmosphere(this.timeOfDay);
     this.applyVillagerFilterBeams();
 
+    // Relax initial spawn positions so zero villagers start overlapping on dense islands
+    for (let pass = 0; pass < 6; pass++) {
+      this.resolveCharacterCollisions(0, true);
+    }
+
     if (!options.preserveCamera) {
       if (this.cameraMode === 'walk') {
         const startIsl = this.builtWorld.islands[0];
@@ -1241,6 +1246,86 @@ export class VillageEngine {
     }
   }
 
+  private getVillagerCurveFrame(v: VillagerEntity): {
+    pt: THREE.Vector3;
+    tx: number;
+    tz: number;
+    nx: number;
+    nz: number;
+    maxLat: number;
+    curveLen: number;
+  } {
+    if (v.behavior === 'bridge_walk' && v.activeBridge) {
+      const t = Math.max(0, Math.min(1, v.activeBridge.t));
+      const pt = v.activeBridge.curve.getPointAt(t);
+      const tan = v.activeBridge.curve.getTangentAt(t);
+      const len = Math.hypot(tan.x, tan.z) || 1;
+      const tx = tan.x / len;
+      const tz = tan.z / len;
+      return {
+        pt,
+        tx,
+        tz,
+        nx: -tz,
+        nz: tx,
+        maxLat: 0.4,
+        curveLen: Math.max(4, v.activeBridge.curve.getLength()),
+      };
+    }
+
+    const t = Math.max(0.03, Math.min(0.97, v.pathT));
+    const pt = v.island.pathCurve.getPointAt(t);
+    const tan = v.island.pathCurve.getTangentAt(t);
+    const len = Math.hypot(tan.x, tan.z) || 1;
+    const tx = tan.x / len;
+    const tz = tan.z / len;
+    return {
+      pt,
+      tx,
+      tz,
+      nx: -tz,
+      nz: tx,
+      maxLat: v.island.branch.isDefault ? 1.06 : 0.84,
+      curveLen: Math.max(6, v.island.length * 0.82),
+    };
+  }
+
+  private syncVillagerWorldPosition(v: VillagerEntity): void {
+    const f = this.getVillagerCurveFrame(v);
+    v.lateralOffset = Math.max(-f.maxLat, Math.min(f.maxLat, v.lateralOffset));
+    v.root.position.set(
+      f.pt.x + f.nx * v.lateralOffset,
+      f.pt.y,
+      f.pt.z + f.nz * v.lateralOffset,
+    );
+  }
+
+  private displaceVillagerOnSurface(v: VillagerEntity, dx: number, dz: number): void {
+    const f = this.getVillagerCurveFrame(v);
+    const dAlong = dx * f.tx + dz * f.tz;
+    const dLat = dx * f.nx + dz * f.nz;
+
+    if (v.behavior === 'bridge_walk' && v.activeBridge) {
+      v.activeBridge.t = Math.max(
+        0.01,
+        Math.min(0.99, v.activeBridge.t + dAlong / f.curveLen),
+      );
+    } else {
+      v.pathT = Math.max(0.04, Math.min(0.96, v.pathT + dAlong / f.curveLen));
+    }
+
+    v.lateralOffset = Math.max(-f.maxLat, Math.min(f.maxLat, v.lateralOffset + dLat));
+    this.syncVillagerWorldPosition(v);
+  }
+
+  private rotateYawSmoothly(currentYaw: number, targetYaw: number, maxStep: number): number {
+    let diff = targetYaw - currentYaw;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    if (Math.abs(diff) <= maxStep) return targetYaw;
+    return currentYaw + Math.sign(diff) * maxStep;
+  }
+
   private updateVillagers(dt: number, elapsed: number): void {
     const count = this.villagers.length;
     const focusKinKey =
@@ -1251,6 +1336,9 @@ export class VillageEngine {
       const isHovered = v === this.hoveredVillager;
       const isSelected = v === this.selectedVillager;
       const isKinHighlighted = Boolean(focusKinKey && v.authorKey === focusKinKey);
+
+      if (v.bumpCooldown > 0) v.bumpCooldown = Math.max(0, v.bumpCooldown - dt);
+      if (v.yieldTimer > 0) v.yieldTimer = Math.max(0, v.yieldTimer - dt);
 
       const auraMat = v.auraRing.material as THREE.MeshBasicMaterial;
       const targetOpacity = isSelected
@@ -1301,10 +1389,10 @@ export class VillageEngine {
       v.behaviorTimer -= dt;
       if (v.behaviorTimer <= 0 && v.behavior !== 'bridge_walk') {
         const roll = Math.random();
-        if (roll < 0.44) {
+        if (roll < 0.48) {
           v.behavior = 'stroll';
-          v.behaviorTimer = 3.0 + Math.random() * 4.0;
-        } else if (roll < 0.72) {
+          v.behaviorTimer = 3.2 + Math.random() * 4.0;
+        } else if (roll < 0.73) {
           v.behavior = 'jump_joy';
           v.behaviorTimer = 2.0 + Math.random() * 2.2;
           const emotes = getRoleMeta(v.commit.kind).defaultEmotes;
@@ -1316,7 +1404,7 @@ export class VillageEngine {
               1.8,
             );
           }
-        } else if (roll < 0.87) {
+        } else if (roll < 0.88) {
           v.behavior = 'tinker';
           v.behaviorTimer = 2.2 + Math.random() * 2.0;
         } else if (roll < 0.94) {
@@ -1329,9 +1417,10 @@ export class VillageEngine {
             v.behavior = 'bridge_walk';
             v.activeBridge = {
               curve: conn.bridge.curve,
-              t: conn.dir === 1 ? 0 : 1,
+              t: conn.dir === 1 ? 0.02 : 0.98,
               dir: conn.dir,
             };
+            v.lateralOffset = conn.dir * 0.22;
             v.behaviorTimer = 8.0;
           } else {
             v.behavior = 'stroll';
@@ -1340,10 +1429,140 @@ export class VillageEngine {
         }
       }
 
+      // Proactive Social Steering ("Make Way"): anticipate oncoming & stopped neighbors
+      const frame = this.getVillagerCurveFrame(v);
+      const travelDir = v.behavior === 'bridge_walk' && v.activeBridge ? v.activeBridge.dir : v.pathDir;
+      const fwdX = frame.tx * travelDir;
+      const fwdZ = frame.tz * travelDir;
+      let desiredLateral =
+        v.behavior === 'bridge_walk' && v.activeBridge
+          ? v.activeBridge.dir * 0.22
+          : v.baseLane;
+      let speedScale = v.yieldTimer > 0 ? 0.18 : 1.0;
+      let politeLookPos: THREE.Vector3 | null = null;
+
+      if (!isHovered && (v.behavior === 'stroll' || v.behavior === 'bridge_walk')) {
+        for (let j = 0; j < count; j++) {
+          if (j === i) continue;
+          const other = this.villagers[j];
+          if (Math.abs(other.root.position.y - v.root.position.y) > 1.3) continue;
+
+          const toX = other.root.position.x - v.root.position.x;
+          const toZ = other.root.position.z - v.root.position.z;
+          const distSq = toX * toX + toZ * toZ;
+          if (distSq > 6.76 || distSq < 0.0001) continue; // within 2.6 units
+
+          const dist = Math.sqrt(distSq);
+          const aheadCos = (toX * fwdX + toZ * fwdZ) / dist;
+          if (aheadCos < 0.02) continue;
+
+          const otherLat =
+            (other.root.position.x - frame.pt.x) * frame.nx +
+            (other.root.position.z - frame.pt.z) * frame.nz;
+          const latGap = Math.abs(otherLat - v.lateralOffset);
+
+          if (v.behavior === 'bridge_walk' && v.activeBridge) {
+            if (other.behavior === 'bridge_walk' && other.activeBridge?.curve === v.activeBridge.curve) {
+              if (other.activeBridge.dir !== v.activeBridge.dir) {
+                desiredLateral = v.activeBridge.dir * 0.38;
+                const shouldYield =
+                  v.burden < other.burden - 0.02 ||
+                  (Math.abs(v.burden - other.burden) <= 0.02 && i > j);
+                if (shouldYield && dist < 1.55) {
+                  speedScale = Math.min(speedScale, dist < 1.05 ? 0.05 : 0.38);
+                  politeLookPos = other.root.position;
+                }
+              } else if (dist < 1.35) {
+                speedScale = Math.min(speedScale, dist < 0.95 ? 0.0 : 0.45);
+              }
+            }
+          } else if (other.island === v.island) {
+            const passClearance = v.collisionRadius + other.collisionRadius + 0.22;
+            if (latGap < passClearance) {
+              const otherMovingOpposite =
+                other.behavior === 'stroll' && other.pathDir !== v.pathDir;
+
+              if (otherMovingOpposite) {
+                // Keep-to-own-right passing lane!
+                desiredLateral = Math.max(
+                  -frame.maxLat,
+                  Math.min(frame.maxLat, v.pathDir * Math.max(0.68, passClearance * 0.65)),
+                );
+              } else {
+                // Overtake / step around stationary or slower neighbor on whichever side has deck room
+                const plusCand = otherLat + passClearance;
+                const minusCand = otherLat - passClearance;
+                const plusValid = plusCand <= frame.maxLat + 0.05;
+                const minusValid = minusCand >= -frame.maxLat - 0.05;
+
+                if (plusValid && minusValid) {
+                  desiredLateral =
+                    Math.abs(plusCand - v.lateralOffset) <= Math.abs(minusCand - v.lateralOffset)
+                      ? plusCand
+                      : minusCand;
+                } else if (plusValid) {
+                  desiredLateral = plusCand;
+                } else if (minusValid) {
+                  desiredLateral = minusCand;
+                } else {
+                  desiredLateral = otherLat >= 0 ? -frame.maxLat : frame.maxLat;
+                }
+                desiredLateral = Math.max(-frame.maxLat, Math.min(frame.maxLat, desiredLateral));
+              }
+
+              if (dist < 1.35 && latGap < passClearance * 0.72) {
+                const shouldYield =
+                  other !== this.hoveredVillager &&
+                  other.behavior === 'stroll' &&
+                  (v.burden < other.burden - 0.02 ||
+                    (Math.abs(v.burden - other.burden) <= 0.02 && i > j));
+                speedScale = Math.min(speedScale, shouldYield ? 0.22 : 0.58);
+                if (shouldYield) politeLookPos = other.root.position;
+              }
+            }
+          }
+        }
+
+        // Also politely step aside for the player's Explorer avatar in Walk mode!
+        if (this.cameraMode === 'walk') {
+          const exPos = this.explorer.root.position;
+          if (Math.abs(exPos.y - v.root.position.y) < 1.3) {
+            const toExX = exPos.x - v.root.position.x;
+            const toExZ = exPos.z - v.root.position.z;
+            const dEx = Math.hypot(toExX, toExZ);
+            if (dEx < 2.2) {
+              const exLat =
+                (exPos.x - frame.pt.x) * frame.nx + (exPos.z - frame.pt.z) * frame.nz;
+              const side = exLat >= v.lateralOffset ? -1 : 1;
+              desiredLateral = Math.max(
+                -frame.maxLat,
+                Math.min(frame.maxLat, exLat + side * (v.collisionRadius + 0.68)),
+              );
+              if (dEx < 1.35) {
+                speedScale = Math.min(speedScale, 0.2);
+                politeLookPos = exPos;
+              }
+            }
+          }
+        }
+      }
+
+      const prevX = v.root.position.x;
+      const prevZ = v.root.position.z;
+
+      // Smoothly steer lateralOffset toward desired passing lane
+      const steerRate = v.behavior === 'stroll' || v.behavior === 'bridge_walk' ? 5.4 : 2.6;
+      v.lateralOffset += (desiredLateral - v.lateralOffset) * Math.min(1, dt * steerRate);
+
       if (isHovered) {
+        this.syncVillagerWorldPosition(v);
         const dx = this.camera.position.x - v.root.position.x;
         const dz = this.camera.position.z - v.root.position.z;
-        v.bodyGroup.rotation.y = Math.atan2(dx, dz);
+        v.bodyGroup.rotation.y = this.rotateYawSmoothly(
+          v.bodyGroup.rotation.y,
+          Math.atan2(dx, dz),
+          dt * 10,
+        );
         v.rightArm.rotation.x = -2.2 + Math.sin(elapsed * 12) * 0.45;
         v.leftArm.rotation.x = Math.sin(elapsed * 5) * 0.15;
         if (v.jumpY === 0 && Math.random() < dt * 2.2) {
@@ -1351,35 +1570,49 @@ export class VillageEngine {
         }
       } else if (v.behavior === 'bridge_walk' && v.activeBridge) {
         const br = v.activeBridge;
-        br.t += br.dir * dt * 0.22;
+        br.t += br.dir * dt * 0.22 * speedScale;
         if (br.t >= 1 || br.t <= 0) {
           if (Math.random() < 0.5) {
             br.dir = (br.dir * -1) as 1 | -1;
-            br.t = Math.max(0, Math.min(1, br.t));
+            br.t = Math.max(0.01, Math.min(0.99, br.t));
           } else {
             v.activeBridge = undefined;
             v.behavior = 'stroll';
             v.behaviorTimer = 3.0;
-            const pt = v.island.pathCurve.getPointAt(v.pathT);
-            v.root.position.copy(pt);
+            this.syncVillagerWorldPosition(v);
           }
         } else {
-          const pt = br.curve.getPointAt(br.t);
-          const nextT = Math.max(0, Math.min(1, br.t + br.dir * 0.03));
-          const nextPt = br.curve.getPointAt(nextT);
-          v.root.position.copy(pt);
-          if (nextPt.distanceToSquared(pt) > 0.0001) {
-            v.bodyGroup.rotation.y = Math.atan2(nextPt.x - pt.x, nextPt.z - pt.z);
+          this.syncVillagerWorldPosition(v);
+          const moveDx = v.root.position.x - prevX;
+          const moveDz = v.root.position.z - prevZ;
+          const moveSpeed = Math.hypot(moveDx, moveDz) / Math.max(0.001, dt);
+
+          if (moveSpeed > 0.12) {
+            v.bodyGroup.rotation.y = this.rotateYawSmoothly(
+              v.bodyGroup.rotation.y,
+              Math.atan2(moveDx, moveDz),
+              dt * 9,
+            );
+          } else if (politeLookPos) {
+            v.bodyGroup.rotation.y = this.rotateYawSmoothly(
+              v.bodyGroup.rotation.y,
+              Math.atan2(politeLookPos.x - v.root.position.x, politeLookPos.z - v.root.position.z),
+              dt * 7,
+            );
           }
+
+          const strideAmp = Math.min(1, 0.2 + speedScale * 0.8);
           const walkCycle = elapsed * 10 + v.phaseOffset;
-          v.leftLeg.rotation.x = Math.sin(walkCycle) * 0.65;
-          v.rightLeg.rotation.x = -Math.sin(walkCycle) * 0.65;
-          v.leftArm.rotation.x = -Math.sin(walkCycle) * 0.5;
-          v.rightArm.rotation.x = Math.sin(walkCycle) * 0.5;
-          v.jumpY = Math.abs(Math.sin(walkCycle)) * 0.09;
+          v.leftLeg.rotation.x = Math.sin(walkCycle) * 0.65 * strideAmp;
+          v.rightLeg.rotation.x = -Math.sin(walkCycle) * 0.65 * strideAmp;
+          v.leftArm.rotation.x = -Math.sin(walkCycle) * 0.5 * strideAmp;
+          v.rightArm.rotation.x = Math.sin(walkCycle) * 0.5 * strideAmp;
+          if (speedScale > 0.25) {
+            v.jumpY = Math.abs(Math.sin(walkCycle)) * 0.09 * strideAmp;
+          }
         }
       } else if (v.behavior === 'stroll') {
-        v.pathT += v.pathDir * v.speed * dt;
+        v.pathT += v.pathDir * v.speed * speedScale * dt;
         if (v.pathT > 0.95) {
           v.pathT = 0.95;
           v.pathDir = -1;
@@ -1388,26 +1621,36 @@ export class VillageEngine {
           v.pathDir = 1;
         }
 
-        const pt = v.island.pathCurve.getPointAt(v.pathT);
-        const aheadT = Math.max(0, Math.min(1, v.pathT + v.pathDir * 0.02));
-        const aheadPt = v.island.pathCurve.getPointAt(aheadT);
+        this.syncVillagerWorldPosition(v);
+        const moveDx = v.root.position.x - prevX;
+        const moveDz = v.root.position.z - prevZ;
+        const moveDist = Math.hypot(moveDx, moveDz);
 
-        const laneOffset = ((i % 3) - 1) * 0.52;
-        v.root.position.set(pt.x, pt.y, pt.z + laneOffset);
-
-        if (aheadPt.distanceToSquared(pt) > 0.00005) {
-          v.bodyGroup.rotation.y = Math.atan2(aheadPt.x - pt.x, aheadPt.z - pt.z);
+        if (moveDist > 0.0025) {
+          v.bodyGroup.rotation.y = this.rotateYawSmoothly(
+            v.bodyGroup.rotation.y,
+            Math.atan2(moveDx, moveDz),
+            dt * 8.5,
+          );
+        } else if (politeLookPos) {
+          v.bodyGroup.rotation.y = this.rotateYawSmoothly(
+            v.bodyGroup.rotation.y,
+            Math.atan2(politeLookPos.x - v.root.position.x, politeLookPos.z - v.root.position.z),
+            dt * 7,
+          );
         }
 
+        const strideAmp = Math.min(1, 0.18 + speedScale * 0.82);
         const cycle = elapsed * 8.5 + v.phaseOffset;
-        v.leftLeg.rotation.x = Math.sin(cycle) * 0.6;
-        v.rightLeg.rotation.x = -Math.sin(cycle) * 0.6;
-        v.leftArm.rotation.x = -Math.sin(cycle) * 0.45;
-        v.rightArm.rotation.x = Math.sin(cycle) * 0.45;
+        v.leftLeg.rotation.x = Math.sin(cycle) * 0.6 * strideAmp;
+        v.rightLeg.rotation.x = -Math.sin(cycle) * 0.6 * strideAmp;
+        v.leftArm.rotation.x = -Math.sin(cycle) * 0.45 * strideAmp;
+        v.rightArm.rotation.x = Math.sin(cycle) * 0.45 * strideAmp;
         if (v.jumpY === 0) {
-          v.bodyGroup.position.y = Math.abs(Math.sin(cycle)) * 0.11;
+          v.bodyGroup.position.y = Math.abs(Math.sin(cycle)) * 0.11 * strideAmp;
         }
       } else if (v.behavior === 'jump_joy') {
+        this.syncVillagerWorldPosition(v);
         if (v.jumpY === 0) {
           v.jumpVelocity = (5.6 + (v.commit.kind === 'feat' ? 1.2 : 0)) * (1 - v.burden * 0.34);
         }
@@ -1416,16 +1659,34 @@ export class VillageEngine {
         v.leftArm.rotation.x = -2.3 + Math.sin(elapsed * 14 + v.phaseOffset) * 0.35;
         v.rightArm.rotation.x = -2.3 - Math.sin(elapsed * 14 + v.phaseOffset) * 0.35;
       } else if (v.behavior === 'tinker') {
+        this.syncVillagerWorldPosition(v);
         const swing = Math.sin(elapsed * 11 + v.phaseOffset);
         v.rightArm.rotation.x = -0.9 + swing * 0.75;
         v.leftArm.rotation.x = -0.3 - swing * 0.2;
         v.leftLeg.rotation.x = 0;
         v.rightLeg.rotation.x = 0;
       } else if (v.behavior === 'spin') {
+        this.syncVillagerWorldPosition(v);
         v.bodyGroup.rotation.y += dt * 9.5;
         v.leftArm.rotation.x = -2.5;
         v.rightArm.rotation.x = -2.5;
       }
+
+      // Apply & decay soft-body bump knockback velocity along walkable surface
+      if (Math.abs(v.bumpVelX) > 0.005 || Math.abs(v.bumpVelZ) > 0.005) {
+        this.displaceVillagerOnSurface(v, v.bumpVelX * dt, v.bumpVelZ * dt);
+        const damp = Math.exp(-8.5 * dt);
+        v.bumpVelX *= damp;
+        v.bumpVelZ *= damp;
+      } else {
+        v.bumpVelX = 0;
+        v.bumpVelZ = 0;
+      }
+
+      // Decay upper-body bump tilt spring
+      const tiltDamp = Math.exp(-9.5 * dt);
+      v.bumpTiltX *= tiltDamp;
+      v.bumpTiltZ *= tiltDamp;
 
       if (v.jumpY > 0) {
         v.bodyGroup.position.y = v.jumpY;
@@ -1433,19 +1694,199 @@ export class VillageEngine {
 
       const swayCycle = elapsed * (7.8 - v.burden * 2.2) + v.phaseOffset;
       const carrierLean = isHovered ? v.burden * 0.08 : v.burden * 0.24;
-      v.bodyGroup.rotation.x = carrierLean;
+      const politeNod = v.yieldTimer > 0 ? 0.12 * Math.sin(v.yieldTimer * Math.PI * 2.2) : 0;
+      v.bodyGroup.rotation.x = carrierLean + v.bumpTiltX;
+      v.bodyGroup.rotation.z = v.bumpTiltZ;
       v.headGroup.rotation.x =
         v.behavior === 'tinker'
-          ? Math.sin(elapsed * 5.5) * 0.14 - carrierLean * 0.5
-          : -carrierLean * 0.55;
-      v.cargoGroup.rotation.z = Math.sin(swayCycle) * (0.03 + v.burden * 0.13);
+          ? Math.sin(elapsed * 5.5) * 0.14 - carrierLean * 0.5 + politeNod
+          : -carrierLean * 0.55 + politeNod;
+      v.cargoGroup.rotation.z =
+        Math.sin(swayCycle) * (0.03 + v.burden * 0.13) - v.bumpTiltZ * 0.85;
       v.cargoGroup.rotation.x = Math.abs(Math.cos(swayCycle)) * (v.burden * 0.055);
       v.cargoGroup.position.y = 0.36 + Math.min(0.1, v.jumpY * 0.12);
+    }
+  }
 
-      if (v.emoteTimer <= 0 && (i + Math.floor(elapsed * 60)) % 45 === 0) {
-        const other = this.villagers[(i + 1) % count];
-        if (other && other !== v && other.root.position.distanceToSquared(v.root.position) < 4.5) {
-          this.triggerEmote(`c:${v.commit.sha}`, v, '👋', 1.5);
+  private resolveCharacterCollisions(dt: number, silent = false): void {
+    const count = this.villagers.length;
+    const passes = silent ? 2 : 3;
+
+    for (let pass = 0; pass < passes; pass++) {
+      // 1. Villager <-> Villager solid body separation + bump & sidestep response
+      for (let i = 0; i < count; i++) {
+        const a = this.villagers[i];
+        for (let j = i + 1; j < count; j++) {
+          const b = this.villagers[j];
+          if (Math.abs(a.root.position.y - b.root.position.y) > 1.25) continue;
+
+          const bothOnBridge =
+            a.behavior === 'bridge_walk' &&
+            b.behavior === 'bridge_walk' &&
+            a.activeBridge?.curve === b.activeBridge?.curve;
+          const rA = bothOnBridge ? 0.35 : a.collisionRadius;
+          const rB = bothOnBridge ? 0.35 : b.collisionRadius;
+          const minSep = rA + rB;
+
+          const dx = b.root.position.x - a.root.position.x;
+          const dz = b.root.position.z - a.root.position.z;
+          const distSq = dx * dx + dz * dz;
+          if (distSq >= minSep * minSep) continue;
+
+          const dist = Math.sqrt(distSq);
+          let ux: number;
+          let uz: number;
+          if (dist > 0.0001) {
+            ux = dx / dist;
+            uz = dz / dist;
+          } else {
+            const fallbackAngle = ((i * 7 + j * 13) % 12) * ((Math.PI * 2) / 12);
+            ux = Math.cos(fallbackAngle);
+            uz = Math.sin(fallbackAngle);
+          }
+
+          const overlap = minSep - dist;
+
+          // Weight separation by inverse mass (heavy-cargo & hovered villagers hold more ground!)
+          const massA = a === this.hoveredVillager ? 4.5 : 1 + a.burden * 1.35;
+          const massB = b === this.hoveredVillager ? 4.5 : 1 + b.burden * 1.35;
+          const invA = 1 / massA;
+          const invB = 1 / massB;
+          const invSum = invA + invB;
+          const shareA = (overlap * (invA / invSum)) + 0.002;
+          const shareB = (overlap * (invB / invSum)) + 0.002;
+
+          // Tactile shoulder bump + tangential sidestep ("bump and make way") on initial contact
+          if (!silent && pass === 0 && dt > 0 && overlap > 0.012 && a.bumpCooldown <= 0 && b.bumpCooldown <= 0) {
+            // Tangential sidestep perpendicular to collision normal so head-on bumps step around each other!
+            const sideX = -uz;
+            const sideZ = ux;
+            const bumpStrength = 1.45;
+
+            a.bumpVelX -= (ux * 0.72 - sideX * 0.68) * bumpStrength * (invA / invSum) * 2;
+            a.bumpVelZ -= (uz * 0.72 - sideZ * 0.68) * bumpStrength * (invA / invSum) * 2;
+            b.bumpVelX += (ux * 0.72 - sideX * 0.68) * bumpStrength * (invB / invSum) * 2;
+            b.bumpVelZ += (uz * 0.72 - sideZ * 0.68) * bumpStrength * (invB / invSum) * 2;
+
+            // Expressive torso & cargo jolt away from contact
+            a.bumpTiltZ = Math.max(-0.24, Math.min(0.24, ux * 0.2));
+            a.bumpTiltX = Math.max(-0.2, Math.min(0.2, -uz * 0.16));
+            b.bumpTiltZ = Math.max(-0.24, Math.min(0.24, -ux * 0.2));
+            b.bumpTiltX = Math.max(-0.2, Math.min(0.2, uz * 0.16));
+
+            if (a.jumpY === 0 && a !== this.hoveredVillager) a.jumpVelocity = 2.4;
+            if (b.jumpY === 0 && b !== this.hoveredVillager) b.jumpVelocity = 2.4;
+
+            a.bumpCooldown = 0.9;
+            b.bumpCooldown = 0.9;
+
+            // Lighter-burden citizen politely pauses to make way for the heavier carrier
+            if (massA <= massB) {
+              a.yieldTimer = 0.48;
+            } else {
+              b.yieldTimer = 0.48;
+            }
+
+            if (a.root.position.distanceToSquared(this.camera.position) < 484) {
+              sound.playBump();
+            }
+            if (a.emoteTimer <= 0 && b.emoteTimer <= 0 && Math.random() < 0.22) {
+              const politeTarget = massA <= massB ? a : b;
+              this.triggerEmote(`c:${politeTarget.commit.sha}`, politeTarget, '👋', 1.3);
+            }
+          }
+
+          this.displaceVillagerOnSurface(a, -ux * shareA, -uz * shareA);
+          this.displaceVillagerOnSurface(b, ux * shareB, uz * shareB);
+        }
+      }
+
+      // 2. GateVisitor <-> GateVisitor & GateVisitor <-> Villager separation (e.g. during Gate Open rush)
+      const gvCount = this.gateVisitors.length;
+      for (let i = 0; i < gvCount; i++) {
+        const ga = this.gateVisitors[i];
+        for (let j = i + 1; j < gvCount; j++) {
+          const gb = this.gateVisitors[j];
+          const dx = gb.root.position.x - ga.root.position.x;
+          const dz = gb.root.position.z - ga.root.position.z;
+          const minSep = 0.82;
+          const distSq = dx * dx + dz * dz;
+          if (distSq >= minSep * minSep || distSq < 0.00001) continue;
+          const dist = Math.sqrt(distSq);
+          const push = (minSep - dist) * 0.5;
+          const ux = dx / dist;
+          const uz = dz / dist;
+          ga.root.position.x -= ux * push;
+          ga.root.position.z -= uz * push;
+          gb.root.position.x += ux * push;
+          gb.root.position.z += uz * push;
+        }
+
+        for (let k = 0; k < count; k++) {
+          const v = this.villagers[k];
+          if (Math.abs(v.root.position.y - ga.root.position.y) > 1.25) continue;
+          const dx = v.root.position.x - ga.root.position.x;
+          const dz = v.root.position.z - ga.root.position.z;
+          const minSep = 0.44 + v.collisionRadius;
+          const distSq = dx * dx + dz * dz;
+          if (distSq >= minSep * minSep || distSq < 0.00001) continue;
+          const dist = Math.sqrt(distSq);
+          const overlap = minSep - dist;
+          const ux = dx / dist;
+          const uz = dz / dist;
+          ga.root.position.x -= ux * overlap * 0.4;
+          ga.root.position.z -= uz * overlap * 0.4;
+          this.displaceVillagerOnSurface(v, ux * overlap * 0.6, uz * overlap * 0.6);
+        }
+      }
+
+      // 3. Walk-Mode Explorer <-> Villagers & GateVisitors (villagers bump & step aside for you!)
+      if (!silent && this.cameraMode === 'walk') {
+        const exPos = this.explorer.root.position;
+        const exRadius = 0.46;
+
+        for (let i = 0; i < count; i++) {
+          const v = this.villagers[i];
+          if (Math.abs(v.root.position.y - exPos.y) > 1.25) continue;
+          const minSep = exRadius + v.collisionRadius;
+          const dx = v.root.position.x - exPos.x;
+          const dz = v.root.position.z - exPos.z;
+          const distSq = dx * dx + dz * dz;
+          if (distSq >= minSep * minSep || distSq < 0.00001) continue;
+
+          const dist = Math.sqrt(distSq);
+          const ux = dx / dist;
+          const uz = dz / dist;
+          const overlap = minSep - dist;
+
+          // Villager yields 70%, Explorer yields 30%
+          this.displaceVillagerOnSurface(v, ux * overlap * 0.72, uz * overlap * 0.72);
+          const candX = exPos.x - ux * overlap * 0.28;
+          const candZ = exPos.z - uz * overlap * 0.28;
+          if (this.sampleWalkableSurfaceY(candX, candZ, exPos.y) !== null) {
+            const dExX = candX - exPos.x;
+            const dExZ = candZ - exPos.z;
+            exPos.x = candX;
+            exPos.z = candZ;
+            this.camera.position.x += dExX;
+            this.camera.position.z += dExZ;
+            this.controls.target.x += dExX;
+            this.controls.target.z += dExZ;
+          }
+
+          if (pass === 0 && v.bumpCooldown <= 0) {
+            v.bumpVelX += (ux * 0.8 - uz * 0.6) * 1.4;
+            v.bumpVelZ += (uz * 0.8 + ux * 0.6) * 1.4;
+            v.bumpTiltZ = Math.max(-0.24, Math.min(0.24, -ux * 0.2));
+            v.bumpTiltX = Math.max(-0.2, Math.min(0.2, uz * 0.16));
+            if (v.jumpY === 0) v.jumpVelocity = 2.6;
+            v.bumpCooldown = 0.85;
+            v.yieldTimer = 0.65;
+            sound.playBump();
+            if (v.emoteTimer <= 0) {
+              this.triggerEmote(`c:${v.commit.sha}`, v, '👋', 1.4);
+            }
+          }
         }
       }
     }
@@ -1574,6 +2015,7 @@ export class VillageEngine {
     this.updateVillagers(dt, elapsed);
     this.updateGateAndVisitors(dt, elapsed);
     this.updateExplorerWalk(dt, elapsed);
+    this.resolveCharacterCollisions(dt, false);
 
     if (this.followVillager && this.selectedVillager && this.cameraMode === 'orbit') {
       const targetLook = this.selectedVillager.root.position

@@ -3,6 +3,7 @@
 class CozySoundEngine {
   private ctx: AudioContext | null = null;
   public muted = false;
+  private lastBumpAt = 0;
 
   private ensureContext(): AudioContext | null {
     if (this.muted) return null;
@@ -55,6 +56,25 @@ class CozySoundEngine {
     osc.connect(gain).connect(ctx.destination);
     osc.start(now);
     osc.stop(now + 0.13);
+  }
+
+  public playBump(): void {
+    const perfNow = performance.now();
+    if (perfNow - this.lastBumpAt < 420) return;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    this.lastBumpAt = perfNow;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(195, now);
+    osc.frequency.exponentialRampToValueAtTime(118, now + 0.065);
+    gain.gain.setValueAtTime(0.022, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.075);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.08);
   }
 
   public playSelectVillager(kind: string): void {

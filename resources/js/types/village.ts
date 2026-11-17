@@ -123,6 +123,15 @@ export interface VillagerEntity {
   pathT: number;
   pathDir: 1 | -1;
   speed: number;
+  collisionRadius: number;
+  baseLane: number;
+  lateralOffset: number;
+  bumpVelX: number;
+  bumpVelZ: number;
+  bumpTiltX: number;
+  bumpTiltZ: number;
+  bumpCooldown: number;
+  yieldTimer: number;
   behavior: VillagerBehavior;
   behaviorTimer: number;
   jumpPhase: number;
