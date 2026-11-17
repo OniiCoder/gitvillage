@@ -845,6 +845,243 @@ body {
   color: var(--text-muted);
 }
 
+/* Local Repository Chooser Dialog & Breadcrumbs */
+.local-picker-dialog {
+  width: min(680px, calc(100vw - 24px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  background: var(--bg-glass-strong);
+  backdrop-filter: blur(18px);
+  border: 1px solid var(--border-glass);
+  border-radius: 18px;
+  padding: 20px;
+  color: var(--text-main);
+  box-shadow: 0 25px 65px rgba(0, 0, 0, 0.65);
+}
+
+.picker-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.picker-path-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.picker-path-form input {
+  flex: 1;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 9px;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  background: rgba(15, 23, 42, 0.78);
+  color: var(--text-main);
+  font-size: 0.85rem;
+}
+
+.picker-path-form input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.picker-section-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #93c5fd;
+  margin: 12px 0 8px;
+}
+
+.picker-roots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.root-chip {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(30, 41, 59, 0.75);
+  color: #e2e8f0;
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.root-chip:hover {
+  border-color: var(--accent);
+  background: rgba(51, 65, 85, 0.9);
+}
+
+/* Semantic Breadcrumbs per modern-web-guidance `breadcrumbs` */
+.folder-breadcrumb {
+  padding: 8px 11px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  margin-bottom: 10px;
+}
+
+.folder-breadcrumb > ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.81rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.folder-breadcrumb > ol > li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.folder-breadcrumb > ol > li + li::before {
+  content: "/" / "";
+  color: var(--text-muted);
+}
+
+.folder-breadcrumb > ol > li > a {
+  color: #7dd3fc;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  border-radius: 4px;
+  padding: 1px 3px;
+}
+
+.folder-breadcrumb > ol > li > a:hover {
+  color: #e0f2fe;
+}
+
+.folder-breadcrumb > ol > li > a[aria-current="page"] {
+  color: #ffffff;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.folder-breadcrumb > ol > li > a:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
+}
+
+@media (forced-colors: active) {
+  .folder-breadcrumb > ol > li > a[aria-current="page"] {
+    text-decoration: underline;
+    border: 1px solid CanvasText;
+  }
+}
+
+.current-git-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(16, 185, 129, 0.16);
+  border: 1px solid rgba(52, 211, 153, 0.48);
+  margin-bottom: 10px;
+}
+
+.current-git-banner strong {
+  display: block;
+  font-size: 0.85rem;
+  color: #d1fae5;
+}
+
+.current-git-banner span {
+  font-size: 0.76rem;
+  color: #a7f3d0;
+}
+
+.folder-browser-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.folder-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 9px;
+  background: rgba(30, 41, 59, 0.58);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.folder-row.is-git {
+  border-color: rgba(52, 211, 153, 0.38);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.folder-nav-btn {
+  flex: 1;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text-main);
+  font-size: 0.83rem;
+  cursor: pointer;
+  padding: 4px 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.folder-nav-btn:hover {
+  color: #7dd3fc;
+}
+
+.folder-name-txt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-folder-tag {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #a7f3d0;
+  background: rgba(16, 185, 129, 0.22);
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  flex-shrink: 0;
+}
+
+.hidden-toggle-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.74rem;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
 /* Guide Dialog */
 .guide-dialog {
   width: min(560px, calc(100vw - 28px));

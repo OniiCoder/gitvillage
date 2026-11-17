@@ -41,8 +41,8 @@
       </form>
 
       <div class="toolbar-actions">
-        <button type="button" id="local-quick-btn" class="btn btn-local" title="Open local git repo and see uncommitted file visitors at the gate">
-          💻 Local Repo
+        <button type="button" id="local-quick-btn" class="btn btn-local" title="Choose any local git repository folder">
+          📂 Choose Local…
         </button>
         <button type="button" class="btn btn-ghost" popovertarget="presets-popover">
           🗺️ Presets
@@ -212,6 +212,79 @@
         <pre id="ins-diff-preview" class="diff-preview-pre" hidden></pre>
       </details>
     </aside>
+
+    <!-- Light-Dismiss Local Repository Chooser Dialog -->
+    <dialog
+      id="local-picker-dialog"
+      class="local-picker-dialog"
+      closedby="any"
+      aria-labelledby="local-picker-title"
+    >
+      <div class="dialog-header">
+        <h2 id="local-picker-title">💻 Choose a Local Git Repository</h2>
+        <div class="picker-top-actions">
+          <button
+            type="button"
+            id="native-finder-btn"
+            class="btn btn-sm btn-local"
+            title="Open macOS Finder folder chooser"
+          >
+            📂 Finder…
+          </button>
+          <button
+            type="button"
+            id="local-picker-close-btn"
+            class="btn-close"
+            aria-label="Close local repository chooser"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+
+      <form id="picker-path-form" class="picker-path-form" autocomplete="off">
+        <label for="picker-path-input" class="sr-only">Local folder path or filter</label>
+        <input
+          id="picker-path-input"
+          type="text"
+          placeholder="Paste path (e.g. ~/Projects/my-app) or filter repos below…"
+          spellcheck="false"
+        />
+        <button type="submit" class="btn btn-primary">Open Path</button>
+      </form>
+
+      <div class="picker-section-label">
+        <span>⚡ Discovered Git Repositories</span>
+        <span id="discovered-count-label" class="popover-sub">Scanning…</span>
+      </div>
+      <div id="picker-discovered-grid" class="preset-grid"></div>
+
+      <div class="picker-section-label">
+        <span>📁 Browse Folders on Mac</span>
+        <label class="hidden-toggle-label">
+          <input type="checkbox" id="picker-hidden-checkbox" />
+          Show hidden folders
+        </label>
+      </div>
+
+      <div id="picker-roots" class="picker-roots"></div>
+
+      <nav class="folder-breadcrumb" aria-label="Folder path breadcrumbs">
+        <ol id="picker-breadcrumbs"></ol>
+      </nav>
+
+      <div id="picker-current-git-banner" class="current-git-banner" hidden>
+        <div>
+          <strong id="picker-current-git-title">🌿 Git repository here</strong>
+          <span id="picker-current-git-sub">Branch: main</span>
+        </div>
+        <button type="button" id="picker-load-current-btn" class="btn btn-primary">
+          🏝️ Load This Repo
+        </button>
+      </div>
+
+      <div id="picker-folder-list" class="folder-browser-list"></div>
+    </dialog>
 
     <!-- Light-Dismiss Village Field Guide Modal Dialog -->
     <dialog id="help-dialog" class="guide-dialog" closedby="any" aria-labelledby="help-title">

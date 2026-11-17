@@ -3,10 +3,13 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { createDemoRepoGraph } from './demoRepo';
 import { hydrateCommitDetail, loadGitHubRepoVillage, parseRepoInput } from './githubLoader';
 import {
+  type DiscoveredLocalRepo,
+  browseLocalDirectory,
   discoverLocalRepos,
   hydrateLocalCommitDetail,
   isLocalPathInput,
   loadLocalRepoVillage,
+  pickNativeMacFolder,
 } from './localLoader';
 import { sound } from './sound';
 import type {
@@ -100,6 +103,23 @@ const helpDialog = document.getElementById('help-dialog') as HTMLDialogElement;
 const helpCloseBtn = document.getElementById('help-close-btn') as HTMLButtonElement;
 const helpGotItBtn = document.getElementById('help-gotit-btn') as HTMLButtonElement;
 
+// Local Repository Picker Dialog DOM
+const localPickerDialog = document.getElementById('local-picker-dialog') as HTMLDialogElement;
+const localPickerCloseBtn = document.getElementById('local-picker-close-btn') as HTMLButtonElement;
+const nativeFinderBtn = document.getElementById('native-finder-btn') as HTMLButtonElement;
+const pickerPathForm = document.getElementById('picker-path-form') as HTMLFormElement;
+const pickerPathInput = document.getElementById('picker-path-input') as HTMLInputElement;
+const discoveredCountLabel = document.getElementById('discovered-count-label') as HTMLSpanElement;
+const pickerDiscoveredGrid = document.getElementById('picker-discovered-grid') as HTMLDivElement;
+const pickerHiddenCheckbox = document.getElementById('picker-hidden-checkbox') as HTMLInputElement;
+const pickerRoots = document.getElementById('picker-roots') as HTMLDivElement;
+const pickerBreadcrumbs = document.getElementById('picker-breadcrumbs') as HTMLOListElement;
+const pickerCurrentGitBanner = document.getElementById('picker-current-git-banner') as HTMLDivElement;
+const pickerCurrentGitTitle = document.getElementById('picker-current-git-title') as HTMLElement;
+const pickerCurrentGitSub = document.getElementById('picker-current-git-sub') as HTMLSpanElement;
+const pickerLoadCurrentBtn = document.getElementById('picker-load-current-btn') as HTMLButtonElement;
+const pickerFolderList = document.getElementById('picker-folder-list') as HTMLDivElement;
+
 const gateDockBtn = document.getElementById('gate-dock-btn') as HTMLButtonElement;
 const randomBtn = document.getElementById('random-btn') as HTMLButtonElement;
 const resetCamBtn = document.getElementById('reset-cam-btn') as HTMLButtonElement;
@@ -129,28 +149,35 @@ const insFilesSummary = document.getElementById('ins-files-summary') as HTMLElem
 const insFilesList = document.getElementById('ins-files-list') as HTMLUListElement;
 const insDiffPreview = document.getElementById('ins-diff-preview') as HTMLPreElement;
 
-// Setup Dialog fallbacks & listeners
-if (!('closedBy' in HTMLDialogElement.prototype)) {
-  helpDialog.addEventListener('click', (event) => {
-    if (event.target !== helpDialog) return;
-    const rect = helpDialog.getBoundingClientRect();
-    const inside =
-      rect.top <= event.clientY &&
-      event.clientY <= rect.top + rect.height &&
-      rect.left <= event.clientX &&
-      event.clientX <= rect.left + rect.width;
-    if (!inside) {
-      closeTopLayerDialog(helpDialog);
-    }
+// Setup Dialog fallbacks & listeners (both Help Dialog and Local Picker Dialog)
+function wireLightDismissDialog(dialog: HTMLDialogElement): void {
+  if (!('closedBy' in HTMLDialogElement.prototype)) {
+    dialog.addEventListener('click', (event) => {
+      if (event.target !== dialog) return;
+      const rect = dialog.getBoundingClientRect();
+      const inside =
+        rect.top <= event.clientY &&
+        event.clientY <= rect.top + rect.height &&
+        rect.left <= event.clientX &&
+        event.clientX <= rect.left + rect.width;
+      if (!inside) {
+        closeTopLayerDialog(dialog);
+      }
+    });
+  }
+  dialog.addEventListener('cancel', (e) => {
+    e.preventDefault();
+    closeTopLayerDialog(dialog);
   });
 }
-helpDialog.addEventListener('cancel', (e) => {
-  e.preventDefault();
-  closeTopLayerDialog(helpDialog);
-});
+
+wireLightDismissDialog(helpDialog);
+wireLightDismissDialog(localPickerDialog);
+
 helpBtn.addEventListener('click', () => helpDialog.showModal());
 helpCloseBtn.addEventListener('click', () => closeTopLayerDialog(helpDialog));
 helpGotItBtn.addEventListener('click', () => closeTopLayerDialog(helpDialog));
+localPickerCloseBtn.addEventListener('click', () => closeTopLayerDialog(localPickerDialog));
 
 // Toast helper
 let toastTimer: number | undefined;
@@ -960,35 +987,245 @@ groupAuthorBtn.addEventListener('click', () => {
   renderRosterPopover();
 });
 
-// Populate Discovered Local Git Repositories inside Presets Popover
+// Populate Discovered Local Git Repositories inside Presets Popover & Local Picker Modal
+let cachedDiscoveredRepos: DiscoveredLocalRepo[] = [];
+let activeBrowseDirPath: string | undefined;
+
+function buildRepoPresetCard(r: DiscoveredLocalRepo, onSelect: () => void): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'preset-card';
+  const title = document.createElement('strong');
+  title.textContent = `💻 ${r.name}`;
+  const sub = document.createElement('span');
+  sub.textContent = `${r.displayPath ?? r.path} · ${r.branch}`;
+  const gateInfo = document.createElement('span');
+  gateInfo.className = 'local-badge';
+  gateInfo.textContent =
+    r.changedFilesCount > 0
+      ? `⛩️ ${r.changedFilesCount} visitor${r.changedFilesCount === 1 ? '' : 's'} waiting at gate`
+      : '✨ Clean working tree (0 at gate)';
+  btn.append(title, sub, gateInfo);
+  btn.addEventListener('click', onSelect);
+  return btn;
+}
+
+function renderFilteredDiscoveredGrid(filterText = ''): void {
+  const q = filterText.trim().toLowerCase();
+  const filtered =
+    !q || isLocalPathInput(q)
+      ? cachedDiscoveredRepos
+      : cachedDiscoveredRepos.filter(
+          (r) =>
+            r.name.toLowerCase().includes(q) ||
+            (r.displayPath ?? r.path).toLowerCase().includes(q) ||
+            r.branch.toLowerCase().includes(q),
+        );
+
+  discoveredCountLabel.textContent = `${filtered.length} repo${filtered.length === 1 ? '' : 's'} found`;
+  const cards = filtered.map((r) =>
+    buildRepoPresetCard(r, () => {
+      closeTopLayerDialog(localPickerDialog);
+      loadLocalRepo(r.path, true);
+    }),
+  );
+  pickerDiscoveredGrid.replaceChildren(...cards);
+}
+
 async function refreshDiscoveredLocalRepos(): Promise<void> {
   const repos = await discoverLocalRepos();
-  if (repos.length === 0) return;
+  cachedDiscoveredRepos = repos;
+  renderFilteredDiscoveredGrid(pickerPathInput.value);
 
-  const cards = repos.map((r) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'preset-card';
-    const title = document.createElement('strong');
-    title.textContent = `💻 ${r.name}`;
-    const sub = document.createElement('span');
-    sub.textContent = `Branch: ${r.branch}`;
-    const gateInfo = document.createElement('span');
-    gateInfo.className = 'local-badge';
-    gateInfo.textContent =
-      r.changedFilesCount > 0
-        ? `⛩️ ${r.changedFilesCount} visitor${r.changedFilesCount === 1 ? '' : 's'} waiting at gate`
-        : '✨ Clean working tree (0 at gate)';
-    btn.append(title, sub, gateInfo);
-    btn.addEventListener('click', () => {
+  const cards = repos.slice(0, 5).map((r) =>
+    buildRepoPresetCard(r, () => {
       presetsPopover.hidePopover?.();
       loadLocalRepo(r.path, true);
-    });
-    return btn;
+    }),
+  );
+
+  const browseMoreBtn = document.createElement('button');
+  browseMoreBtn.type = 'button';
+  browseMoreBtn.className = 'preset-card';
+  const bTitle = document.createElement('strong');
+  bTitle.textContent = '📂 Browse Any Folder…';
+  const bSub = document.createElement('span');
+  bSub.textContent = 'Navigate folders on your Mac or open with Finder';
+  browseMoreBtn.append(bTitle, bSub);
+  browseMoreBtn.addEventListener('click', () => {
+    presetsPopover.hidePopover?.();
+    openLocalPickerModal();
   });
 
-  localReposGrid.replaceChildren(...cards);
+  localReposGrid.replaceChildren(...cards, browseMoreBtn);
 }
+
+async function loadPickerDirectory(targetPath?: string): Promise<void> {
+  try {
+    const data = await browseLocalDirectory(targetPath, pickerHiddenCheckbox.checked);
+    activeBrowseDirPath = data.currentPath;
+
+    // Quick-jump root chips
+    const rootBtns = data.roots.map((rt) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'root-chip';
+      b.textContent = rt.label;
+      b.addEventListener('click', () => loadPickerDirectory(rt.path));
+      return b;
+    });
+    pickerRoots.replaceChildren(...rootBtns);
+
+    // Semantic accessible Breadcrumbs (<ol> -> <li> -> <a>, last with aria-current="page")
+    const crumbItems = data.breadcrumbs.map((bc, idx) => {
+      const li = document.createElement('li');
+      const a = document.createElement('a');
+      a.href = '#';
+      a.textContent = bc.label;
+      if (idx === data.breadcrumbs.length - 1) {
+        a.setAttribute('aria-current', 'page');
+      }
+      a.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        loadPickerDirectory(bc.path);
+      });
+      li.appendChild(a);
+      return li;
+    });
+    pickerBreadcrumbs.replaceChildren(...crumbItems);
+
+    // Current directory Git Repo banner
+    if (data.currentGitRepo) {
+      const repo = data.currentGitRepo;
+      pickerCurrentGitTitle.textContent = `🌿 "${repo.name}" is a Git repository`;
+      pickerCurrentGitSub.textContent =
+        repo.changedFilesCount > 0
+          ? `Branch: ${repo.branch} · ⛩️ ${repo.changedFilesCount} changed file${repo.changedFilesCount === 1 ? '' : 's'} waiting at gate`
+          : `Branch: ${repo.branch} · ✨ Clean working tree`;
+      pickerLoadCurrentBtn.onclick = () => {
+        closeTopLayerDialog(localPickerDialog);
+        loadLocalRepo(repo.path, true);
+      };
+      pickerCurrentGitBanner.hidden = false;
+    } else {
+      pickerCurrentGitBanner.hidden = true;
+    }
+
+    // Subfolder rows
+    const rows: HTMLElement[] = [];
+    if (data.parentPath) {
+      const upRow = document.createElement('div');
+      upRow.className = 'folder-row';
+      const upBtn = document.createElement('button');
+      upBtn.type = 'button';
+      upBtn.className = 'folder-nav-btn';
+      upBtn.textContent = '⬆️ .. (Parent folder)';
+      upBtn.addEventListener('click', () => loadPickerDirectory(data.parentPath!));
+      upRow.appendChild(upBtn);
+      rows.push(upRow);
+    }
+
+    for (const f of data.folders) {
+      const row = document.createElement('div');
+      row.className = f.isGitRepo ? 'folder-row is-git' : 'folder-row';
+
+      const navBtn = document.createElement('button');
+      navBtn.type = 'button';
+      navBtn.className = 'folder-nav-btn';
+      const iconSpan = document.createElement('span');
+      iconSpan.textContent = f.isGitRepo ? '📦' : '📁';
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'folder-name-txt';
+      nameSpan.textContent = f.name;
+      navBtn.append(iconSpan, nameSpan);
+
+      if (f.isGitRepo) {
+        const tag = document.createElement('span');
+        tag.className = 'git-folder-tag';
+        tag.textContent = 'Git Repo';
+        navBtn.appendChild(tag);
+      }
+
+      navBtn.addEventListener('click', () => {
+        loadPickerDirectory(f.path);
+      });
+      row.appendChild(navBtn);
+
+      if (f.isGitRepo) {
+        const openBtn = document.createElement('button');
+        openBtn.type = 'button';
+        openBtn.className = 'btn btn-sm btn-primary';
+        openBtn.textContent = '🏝️ Open';
+        openBtn.addEventListener('click', () => {
+          closeTopLayerDialog(localPickerDialog);
+          loadLocalRepo(f.path, true);
+        });
+        row.appendChild(openBtn);
+      }
+
+      rows.push(row);
+    }
+
+    pickerFolderList.replaceChildren(...rows);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Unable to read folder.';
+    showToast(msg, true);
+  }
+}
+
+function openLocalPickerModal(): void {
+  sound.playPop(523.25);
+  localPickerDialog.showModal();
+  refreshDiscoveredLocalRepos();
+  loadPickerDirectory(activeBrowseDirPath ?? activeGraph.localPath);
+}
+
+pickerHiddenCheckbox.addEventListener('change', () => {
+  loadPickerDirectory(activeBrowseDirPath);
+});
+
+pickerPathInput.addEventListener('input', () => {
+  renderFilteredDiscoveredGrid(pickerPathInput.value);
+});
+
+pickerPathForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const raw = pickerPathInput.value.trim();
+  if (!raw) return;
+
+  // Try opening as a git repo directly; if it's a parent folder without .git, browse into it!
+  try {
+    const dirInfo = await browseLocalDirectory(raw, pickerHiddenCheckbox.checked);
+    if (dirInfo.currentGitRepo) {
+      closeTopLayerDialog(localPickerDialog);
+      await loadLocalRepo(dirInfo.currentGitRepo.path, true);
+    } else {
+      await loadPickerDirectory(dirInfo.currentPath);
+      showToast('Opened folder in browser below — pick a Git repository subfolder!');
+    }
+  } catch {
+    closeTopLayerDialog(localPickerDialog);
+    await loadLocalRepo(raw, true);
+  }
+});
+
+nativeFinderBtn.addEventListener('click', async () => {
+  nativeFinderBtn.disabled = true;
+  nativeFinderBtn.textContent = 'Opening Finder…';
+  try {
+    const result = await pickNativeMacFolder();
+    if (result.path && !result.cancelled) {
+      closeTopLayerDialog(localPickerDialog);
+      await loadLocalRepo(result.path, true);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Finder picker unavailable';
+    showToast(msg, true);
+  } finally {
+    nativeFinderBtn.disabled = false;
+    nativeFinderBtn.textContent = '📂 Finder…';
+  }
+});
 
 presetsPopover.addEventListener('beforetoggle', (e) => {
   if ((e as ToggleEvent).newState === 'open') {
@@ -1166,11 +1403,7 @@ repoForm.addEventListener('submit', (e) => {
 });
 
 localQuickBtn.addEventListener('click', () => {
-  if (activeGraph.isLocal && builtWorld?.gate) {
-    flyToGate(true);
-  } else {
-    loadLocalRepo('.', true);
-  }
+  openLocalPickerModal();
 });
 
 document.querySelectorAll<HTMLButtonElement>('.preset-card[data-repo]').forEach((card) => {
@@ -1291,6 +1524,8 @@ function sampleWalkableSurfaceY(x: number, z: number, currentY: number): number 
 // Keyboard Controls for Walk Mode
 window.addEventListener('keydown', (e) => {
   if (
+    helpDialog.open ||
+    localPickerDialog.open ||
     document.activeElement instanceof HTMLInputElement ||
     document.activeElement instanceof HTMLTextAreaElement
   ) {

@@ -12,14 +12,27 @@ const BRANCH_PALETTE = ['#34d399', '#60a5fa', '#f472b6', '#fbbf24', '#a78bfa', '
 export interface DiscoveredLocalRepo {
   name: string;
   path: string;
+  displayPath?: string;
   branch: string;
   changedFilesCount: number;
+}
+
+export interface BrowseDirsResponse {
+  currentPath: string;
+  displayPath: string;
+  parentPath: string | null;
+  currentGitRepo: DiscoveredLocalRepo | null;
+  breadcrumbs: Array<{ label: string; path: string }>;
+  roots: Array<{ label: string; path: string }>;
+  folders: Array<{ name: string; path: string; isGitRepo: boolean }>;
+  error?: string;
 }
 
 export function isLocalPathInput(raw: string): boolean {
   const t = raw.trim();
   return (
     t === '.' ||
+    t === '~' ||
     t.startsWith('/') ||
     t.startsWith('~/') ||
     t.startsWith('./') ||
@@ -30,13 +43,40 @@ export function isLocalPathInput(raw: string): boolean {
 
 export async function discoverLocalRepos(): Promise<DiscoveredLocalRepo[]> {
   try {
-    const res = await fetch('/api/local-repos', { signal: AbortSignal.timeout(4000) });
+    const res = await fetch('/api/local-repos', { signal: AbortSignal.timeout(5000) });
     if (!res.ok) return [];
     const data = (await res.json()) as { repos?: DiscoveredLocalRepo[] };
     return data.repos ?? [];
   } catch {
     return [];
   }
+}
+
+export async function browseLocalDirectory(
+  targetPath?: string,
+  showHidden = false,
+): Promise<BrowseDirsResponse> {
+  const url = new URL('/api/browse-dirs', window.location.origin);
+  if (targetPath) url.searchParams.set('path', targetPath);
+  if (showHidden) url.searchParams.set('hidden', '1');
+  const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+  const data = (await res.json()) as BrowseDirsResponse;
+  if (!res.ok || data.error) {
+    throw new Error(data.error || 'Could not read directory.');
+  }
+  return data;
+}
+
+export async function pickNativeMacFolder(): Promise<{ path?: string; cancelled?: boolean }> {
+  const res = await fetch('/api/pick-native-folder', {
+    method: 'POST',
+    signal: AbortSignal.timeout(120_000),
+  });
+  const data = (await res.json()) as { path?: string; cancelled?: boolean; error?: string };
+  if (!res.ok || data.error) {
+    throw new Error(data.error || 'Native folder picker unavailable.');
+  }
+  return data;
 }
 
 interface LocalRepoApiResponse {

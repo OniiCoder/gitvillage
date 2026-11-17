@@ -12,6 +12,9 @@ function resolveUserPath(rawPath: string): string {
   if (!trimmed || trimmed === '.') {
     return process.cwd();
   }
+  if (trimmed === '~') {
+    return os.homedir();
+  }
   if (trimmed.startsWith('~/')) {
     return path.join(os.homedir(), trimmed.slice(2));
   }
@@ -29,14 +32,32 @@ async function runGit(cwd: string, args: string[]): Promise<string> {
 interface DiscoveredLocalRepo {
   name: string;
   path: string;
+  displayPath: string;
   branch: string;
   changedFilesCount: number;
 }
 
+function formatDisplayPath(fullPath: string): string {
+  const home = os.homedir();
+  if (fullPath === home) return '~';
+  if (fullPath.startsWith(`${home}/`)) {
+    return `~/${fullPath.slice(home.length + 1)}`;
+  }
+  return fullPath;
+}
+
+async function hasGitEntry(dirPath: string): Promise<boolean> {
+  try {
+    await fs.stat(path.join(dirPath, '.git'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function inspectQuickRepo(dirPath: string): Promise<DiscoveredLocalRepo | null> {
   try {
-    const stat = await fs.stat(path.join(dirPath, '.git'));
-    if (!stat) return null;
+    if (!(await hasGitEntry(dirPath))) return null;
     const [branchOut, statusOut] = await Promise.all([
       runGit(dirPath, ['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => 'main'),
       runGit(dirPath, ['status', '--porcelain=v1', '-uall']).catch(() => ''),
@@ -48,6 +69,7 @@ async function inspectQuickRepo(dirPath: string): Promise<DiscoveredLocalRepo | 
     return {
       name: path.basename(dirPath),
       path: dirPath,
+      displayPath: formatDisplayPath(dirPath),
       branch: branchOut.trim() || 'main',
       changedFilesCount,
     };
@@ -56,12 +78,74 @@ async function inspectQuickRepo(dirPath: string): Promise<DiscoveredLocalRepo | 
   }
 }
 
+// Avoid macOS TCC-protected folders during automatic background scan; user can still click into them manually!
+const SKIP_AUTO_SCAN_DIRS = new Set([
+  'Library',
+  'Applications',
+  'Desktop',
+  'Documents',
+  'Downloads',
+  'Pictures',
+  'Music',
+  'Movies',
+  'Public',
+  'node_modules',
+  'dist',
+  'build',
+  'vendor',
+  '.Trash',
+  '.npm',
+  '.cache',
+  '.git',
+]);
+
+async function collectRepoCandidates(): Promise<string[]> {
+  const home = os.homedir();
+  const cwd = process.cwd();
+  const scratchDir = path.dirname(cwd);
+
+  const found = new Set<string>([cwd]);
+
+  const scanOneLevel = async (rootDir: string, depthLeft: number): Promise<void> => {
+    let entries;
+    try {
+      entries = await fs.readdir(rootDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    const subDirs: string[] = [];
+    for (const ent of entries) {
+      if (!ent.isDirectory()) continue;
+      if (ent.name.startsWith('.')) continue;
+      if (SKIP_AUTO_SCAN_DIRS.has(ent.name)) continue;
+      const full = path.join(rootDir, ent.name);
+      if (await hasGitEntry(full)) {
+        found.add(full);
+      } else if (depthLeft > 0) {
+        subDirs.push(full);
+      }
+    }
+
+    if (depthLeft > 0 && subDirs.length > 0) {
+      await Promise.all(subDirs.slice(0, 24).map((d) => scanOneLevel(d, depthLeft - 1)));
+    }
+  };
+
+  await Promise.all([
+    scanOneLevel(scratchDir, 1),
+    scanOneLevel(home, 1),
+  ]);
+
+  return [...found];
+}
+
 function localGitVillagePlugin(): Plugin {
   return {
     name: 'local-git-village-api',
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
-        if (!req.url?.startsWith('/api/local-')) {
+        if (!req.url?.startsWith('/api/')) {
           return next();
         }
 
@@ -69,35 +153,161 @@ function localGitVillagePlugin(): Plugin {
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
 
         try {
+          // 1. Auto-discover local git repositories
           if (reqUrl.pathname === '/api/local-repos') {
-            const cwd = process.cwd();
-            const parentDir = path.dirname(cwd);
-            const candidates = new Set<string>([cwd]);
-
-            try {
-              const entries = await fs.readdir(parentDir, { withFileTypes: true });
-              for (const ent of entries) {
-                if (ent.isDirectory() && !ent.name.startsWith('.')) {
-                  candidates.add(path.join(parentDir, ent.name));
-                }
-              }
-            } catch {
-              // ignore parent scan errors
-            }
-
-            const inspected = await Promise.all([...candidates].map(inspectQuickRepo));
-            const repos = inspected.filter((r): r is DiscoveredLocalRepo => r !== null);
+            const candidatePaths = await collectRepoCandidates();
+            const inspected = await Promise.all(candidatePaths.map(inspectQuickRepo));
+            const repos = inspected
+              .filter((r): r is DiscoveredLocalRepo => r !== null)
+              .sort((a, b) => {
+                if (a.path === process.cwd()) return -1;
+                if (b.path === process.cwd()) return 1;
+                return b.changedFilesCount - a.changedFilesCount || a.name.localeCompare(b.name);
+              });
             res.statusCode = 200;
             res.end(JSON.stringify({ repos }));
             return;
           }
 
+          // 2. Interactive visual folder browser
+          if (reqUrl.pathname === '/api/browse-dirs') {
+            const rawTarget = reqUrl.searchParams.get('path') ?? path.dirname(process.cwd());
+            const showHidden = reqUrl.searchParams.get('hidden') === '1';
+            const dirPath = resolveUserPath(rawTarget);
+
+            const stat = await fs.stat(dirPath);
+            if (!stat.isDirectory()) {
+              throw new Error('Selected path is not a directory.');
+            }
+
+            // Check if dirPath itself is inside a git repo
+            let currentGitRepo: DiscoveredLocalRepo | null = null;
+            try {
+              const gitTop = (await runGit(dirPath, ['rev-parse', '--show-toplevel'])).trim();
+              if (gitTop) {
+                currentGitRepo = await inspectQuickRepo(gitTop);
+              }
+            } catch {
+              currentGitRepo = null;
+            }
+
+            const entries = await fs.readdir(dirPath, { withFileTypes: true });
+            const dirNames = entries
+              .filter((e) => e.isDirectory() && (showHidden || !e.name.startsWith('.')))
+              .filter((e) => e.name !== 'node_modules' && e.name !== '.git')
+              .map((e) => e.name)
+              .sort((a, b) => a.localeCompare(b));
+
+            const folders = await Promise.all(
+              dirNames.slice(0, 120).map(async (name) => {
+                const full = path.join(dirPath, name);
+                const isGit = await hasGitEntry(full);
+                return {
+                  name,
+                  path: full,
+                  isGitRepo: isGit,
+                };
+              }),
+            );
+
+            // Put Git repo folders at the top for easy picking!
+            folders.sort((a, b) => {
+              if (a.isGitRepo !== b.isGitRepo) return a.isGitRepo ? -1 : 1;
+              return a.name.localeCompare(b.name);
+            });
+
+            // Quick-jump roots
+            const home = os.homedir();
+            const scratch = path.dirname(process.cwd());
+            const potentialRoots = [
+              { label: '🧪 Scratch', path: scratch },
+              { label: '🏠 Home', path: home },
+              { label: '💻 Projects', path: path.join(home, 'Projects') },
+              { label: '🛠️ Developer', path: path.join(home, 'Developer') },
+              { label: '📦 Code', path: path.join(home, 'Code') },
+              { label: '🖥️ Desktop', path: path.join(home, 'Desktop') },
+              { label: '📄 Documents', path: path.join(home, 'Documents') },
+            ];
+            const roots: Array<{ label: string; path: string }> = [];
+            for (const r of potentialRoots) {
+              try {
+                const st = await fs.stat(r.path);
+                if (st.isDirectory()) roots.push(r);
+              } catch {
+                // skip nonexistent root
+              }
+            }
+
+            // Build ancestor segments for Breadcrumbs
+            const parsed = path.parse(dirPath);
+            const rel = dirPath.slice(parsed.root.length).split(path.sep).filter(Boolean);
+            const breadcrumbs: Array<{ label: string; path: string }> = [
+              { label: parsed.root, path: parsed.root },
+            ];
+            let accum = parsed.root;
+            for (const seg of rel) {
+              accum = path.join(accum, seg);
+              breadcrumbs.push({ label: seg, path: accum });
+            }
+
+            res.statusCode = 200;
+            res.end(
+              JSON.stringify({
+                currentPath: dirPath,
+                displayPath: formatDisplayPath(dirPath),
+                parentPath: path.dirname(dirPath) !== dirPath ? path.dirname(dirPath) : null,
+                currentGitRepo,
+                breadcrumbs,
+                roots,
+                folders,
+              }),
+            );
+            return;
+          }
+
+          // 3. Native OS Folder Picker Dialog (macOS Finder via osascript)
+          if (reqUrl.pathname === '/api/pick-native-folder' && req.method === 'POST') {
+            if (process.platform !== 'darwin') {
+              res.statusCode = 400;
+              res.end(
+                JSON.stringify({
+                  error: 'Native Finder picker is only supported on macOS; use the folder browser below.',
+                }),
+              );
+              return;
+            }
+            try {
+              const { stdout } = await execFileAsync('osascript', [
+                '-e',
+                'POSIX path of (choose folder with prompt "Choose a local Git repository:")',
+              ]);
+              const chosen = stdout.trim().replace(/\/+$/, '') || '/';
+              res.statusCode = 200;
+              res.end(JSON.stringify({ path: chosen }));
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : '';
+              if (msg.includes('-128') || msg.toLowerCase().includes('canceled')) {
+                res.statusCode = 200;
+                res.end(JSON.stringify({ cancelled: true }));
+                return;
+              }
+              throw new Error('Could not open macOS Finder dialog; pick a folder from the browser below.');
+            }
+            return;
+          }
+
+          // 4. Full Local Git Repo Graph + Working-Tree Gate Visitors
           if (reqUrl.pathname === '/api/local-repo') {
             const rawTarget = reqUrl.searchParams.get('path') ?? '.';
             const resolved = resolveUserPath(rawTarget);
-            const topLevel = (
-              await runGit(resolved, ['rev-parse', '--show-toplevel'])
-            ).trim();
+            let topLevel: string;
+            try {
+              topLevel = (await runGit(resolved, ['rev-parse', '--show-toplevel'])).trim();
+            } catch {
+              throw new Error(
+                `"${formatDisplayPath(resolved)}" is not a Git repository (no .git folder found).`,
+              );
+            }
 
             const repoName = path.basename(topLevel);
             const parentName = path.basename(path.dirname(topLevel)) || 'local';
@@ -107,7 +317,6 @@ function localGitVillagePlugin(): Plugin {
             ).trim();
             const currentBranch = currentBranchRaw === 'HEAD' ? 'detached-head' : currentBranchRaw;
 
-            // Gather local branches (up to 6)
             const branchesOut = await runGit(topLevel, [
               'for-each-ref',
               '--sort=-committerdate',
@@ -129,12 +338,10 @@ function localGitVillagePlugin(): Plugin {
               branchEntries.push({ name: currentBranch, sha: '' });
             }
 
-            // Ensure currentBranch is first
             branchEntries.sort((a, b) =>
               a.name === currentBranch ? -1 : b.name === currentBranch ? 1 : 0,
             );
 
-            // Parse commits per branch using NUL/record separators
             const REC_SEP = '\x1e';
             const FLD_SEP = '\x1f';
             const logFormat = `%H${FLD_SEP}%P${FLD_SEP}%an${FLD_SEP}%ae${FLD_SEP}%aI${FLD_SEP}%s${FLD_SEP}%b${REC_SEP}`;
@@ -188,7 +395,6 @@ function localGitVillagePlugin(): Plugin {
               });
             }
 
-            // Working-tree status -> Gate Visitors!
             const [porcelainOut, unstagedNumstat, stagedNumstat] = await Promise.all([
               runGit(topLevel, ['status', '--porcelain=v1', '-uall']).catch(() => ''),
               runGit(topLevel, ['diff', '--numstat']).catch(() => ''),
@@ -225,7 +431,6 @@ function localGitVillagePlugin(): Plugin {
                 if (filename.includes(' -> ')) {
                   filename = filename.split(' -> ').pop()!.trim();
                 }
-                // Strip surrounding quotes if git quoted special characters
                 if (filename.startsWith('"') && filename.endsWith('"')) {
                   filename = filename.slice(1, -1);
                 }
@@ -301,6 +506,7 @@ function localGitVillagePlugin(): Plugin {
             return;
           }
 
+          // 5. Commit detail hydration for local repos
           if (reqUrl.pathname === '/api/local-commit-detail') {
             const rawTarget = reqUrl.searchParams.get('path') ?? '.';
             const sha = (reqUrl.searchParams.get('sha') ?? '').trim();
