@@ -1,21 +1,32 @@
 {
-  "name": "git-village",
-  "version": "1.0.0",
-  "private": true,
-  "type": "module",
-  "description": "3D floating-island village where every git commit is a living villager",
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "@oddbird/popover-polyfill": "^0.6.1",
-    "three": "^0.181.2"
-  },
-  "devDependencies": {
-    "@types/three": "^0.181.0",
-    "typescript": "^5.9.3",
-    "vite": "^7.2.4"
-  }
+    "$schema": "https://www.schemastore.org/package.json",
+    "name": "git-archipelago",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "tsc --noEmit && vite build",
+        "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+        "@inertiajs/react": "^3.11.0",
+        "@oddbird/popover-polyfill": "^0.7.3",
+        "invokers-polyfill": "^1.0.4",
+        "react": "^19.3.1",
+        "react-dom": "^19.3.1",
+        "three": "^0.187.0"
+    },
+    "devDependencies": {
+        "@types/react": "^19.3.0",
+        "@types/react-dom": "^19.3.0",
+        "@types/three": "^0.187.0",
+        "@vitejs/plugin-react": "^6.3.0",
+        "concurrently": "^10.0.3",
+        "laravel-vite-plugin": "^3.1",
+        "typescript": "^7.0.2",
+        "vite": "^8.0.0"
+    },
+    "optionalDependencies": {
+        "@laravel/multiplex": "^0.4.1"
+    }
 }
