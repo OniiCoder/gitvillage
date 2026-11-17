@@ -811,7 +811,13 @@ async function populateCommitInspector(commit: CommitData): Promise<void> {
   insAvatar.style.background = bgHex;
   if (commit.authorAvatar) {
     const img = document.createElement('img');
-    img.src = commit.authorAvatar;
+    const u = commit.authorAvatar;
+    img.src = u.includes('githubusercontent.com') && !u.includes('s=')
+      ? `${u}${u.includes('?') ? '&' : '?'}s=72`
+      : u;
+    img.width = 34;
+    img.height = 34;
+    img.decoding = 'async';
     img.alt = commit.authorName;
     insAvatar.appendChild(img);
   } else {
@@ -988,7 +994,13 @@ function renderContributorStack(): void {
 
     if (clan.authorAvatar) {
       const img = document.createElement('img');
-      img.src = clan.authorAvatar;
+      const u = clan.authorAvatar;
+      img.src = u.includes('githubusercontent.com') && !u.includes('s=')
+        ? `${u}${u.includes('?') ? '&' : '?'}s=64`
+        : u;
+      img.width = 26;
+      img.height = 26;
+      img.decoding = 'async';
       img.alt = '';
       btn.appendChild(img);
     } else {
