@@ -1,4 +1,5 @@
 import { useEffect, useRef, type FormEvent } from 'react';
+import { BranchSwitcher } from '@/Components/BranchSwitcher';
 import { SfIcon } from '@/Components/SfIconSprite';
 import type { ContributorClanProfile } from '@/lib/villagerMesh';
 import type { CameraMode, RepoVillageGraph, TimeOfDay } from '@/types/village';
@@ -18,6 +19,7 @@ interface SpatialTopbarProps {
   timeOfDay: TimeOfDay;
   muted: boolean;
   onOpenLocalModal: () => void;
+  onSelectBranch: (branchName: string, options?: { checkoutGitHead?: boolean }) => void;
   onToggleAuthor: (authorKey: string) => void;
   onToggleWalkMode: () => void;
   onCycleSky: () => void;
@@ -40,6 +42,7 @@ export function SpatialTopbar({
   timeOfDay,
   muted,
   onOpenLocalModal,
+  onSelectBranch,
   onToggleAuthor,
   onToggleWalkMode,
   onCycleSky,
@@ -103,8 +106,8 @@ export function SpatialTopbar({
   }, []);
 
   const statsLabel = graph.isLocal
-    ? `${graph.repo} · ${villagerCount} commits · ${gateVisitorsCount} at gate`
-    : `${graph.repo} · ${villagerCount} commits · ${graph.branches.length} island${graph.branches.length === 1 ? '' : 's'}`;
+    ? `${graph.repo} · ${villagerCount}c · ${gateVisitorsCount} gate`
+    : `${graph.repo} · ${villagerCount} commits`;
 
   const skySymbol =
     timeOfDay === 'day' ? 'sf-sun' : timeOfDay === 'sunset' ? 'sf-sunset' : 'sf-moon';
@@ -117,6 +120,12 @@ export function SpatialTopbar({
         </span>
         <div className="brand-meta">
           <span className="brand-name">GitVillage</span>
+          <BranchSwitcher
+            graph={graph}
+            localServerEnabled={localServerEnabled}
+            isLoading={isLoading}
+            onSelectBranch={onSelectBranch}
+          />
           <span id="repo-stats-pill" className="stats-pill">
             {statsLabel}
           </span>
@@ -126,7 +135,7 @@ export function SpatialTopbar({
             role="group"
             aria-label="Spotlight contributor clan"
           >
-            {clans.slice(0, 6).map((clan) => {
+            {clans.slice(0, 5).map((clan) => {
               const avatarSrc =
                 clan.authorAvatar &&
                 clan.authorAvatar.includes('githubusercontent.com') &&

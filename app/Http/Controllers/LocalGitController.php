@@ -208,6 +208,7 @@ class LocalGitController extends Controller
     public function inspect(Request $request): JsonResponse
     {
         $rawPath = (string) $request->query('path', '.');
+        $requestedBranch = trim((string) $request->query('branch', ''));
         $resolved = $this->resolveUserPath($rawPath);
 
         $topRes = $this->runGit($resolved, ['rev-parse', '--show-toplevel']);
@@ -220,7 +221,7 @@ class LocalGitController extends Controller
         $ownerName = basename(dirname($topLevel)) ?: 'local';
 
         $headRes = $this->runGit($topLevel, ['symbolic-ref', '--short', 'HEAD']);
-        $currentBranch = $headRes['ok'] && trim($headRes['stdout']) !== ''
+        $headBranch = $headRes['ok'] && trim($headRes['stdout']) !== ''
             ? trim($headRes['stdout'])
             : 'detached-HEAD';
 
@@ -234,16 +235,24 @@ class LocalGitController extends Controller
             ? array_values(array_filter(array_map('trim', explode("\n", $refsRes['stdout']))))
             : [];
 
-        if ($currentBranch !== 'detached-HEAD' && ! in_array($currentBranch, $branchNames, true)) {
-            array_unshift($branchNames, $currentBranch);
-        } elseif (in_array($currentBranch, $branchNames, true)) {
-            $branchNames = array_values(array_unique(array_merge([$currentBranch], $branchNames)));
+        if ($headBranch !== 'detached-HEAD' && ! in_array($headBranch, $branchNames, true)) {
+            array_unshift($branchNames, $headBranch);
+        } elseif (in_array($headBranch, $branchNames, true)) {
+            $branchNames = array_values(array_unique(array_merge([$headBranch], $branchNames)));
         }
-        $selectedBranches = array_slice($branchNames, 0, 6);
+
+        $activeBranch = ($requestedBranch !== '' && in_array($requestedBranch, $branchNames, true))
+            ? $requestedBranch
+            : $headBranch;
+
+        $orderedBranches = $activeBranch !== 'detached-HEAD'
+            ? array_values(array_unique(array_merge([$activeBranch], $branchNames)))
+            : $branchNames;
+        $selectedBranches = array_slice($orderedBranches, 0, 6);
 
         $branchesPayload = [];
         foreach ($selectedBranches as $bName) {
-            $isCurrent = $bName === $currentBranch;
+            $isCurrent = $bName === $activeBranch;
             $limit = $isCurrent ? 22 : 8;
             $commits = $this->parseBranchLog($topLevel, $bName, $limit);
             $branchesPayload[] = [
@@ -253,7 +262,7 @@ class LocalGitController extends Controller
             ];
         }
 
-        if ($branchesPayload === [] && $currentBranch === 'detached-HEAD') {
+        if ($branchesPayload === [] && $activeBranch === 'detached-HEAD') {
             $commits = $this->parseBranchLog($topLevel, 'HEAD', 22);
             if ($commits !== []) {
                 $branchesPayload[] = [
@@ -270,10 +279,49 @@ class LocalGitController extends Controller
             'owner' => $ownerName,
             'repo' => $repoName,
             'localPath' => $topLevel,
-            'currentBranch' => $currentBranch,
+            'currentBranch' => $activeBranch,
+            'headBranch' => $headBranch,
+            'allBranches' => array_slice($branchNames, 0, 60),
             'branches' => $branchesPayload,
             'gateVisitors' => array_slice($gateVisitors, 0, 48),
             'totalChangedFiles' => count($gateVisitors),
+        ]);
+    }
+
+    public function checkout(Request $request): JsonResponse
+    {
+        $rawPath = (string) $request->input('path', '.');
+        $branch = trim((string) $request->input('branch', ''));
+
+        if ($branch === '' || str_starts_with($branch, '-') || str_contains($branch, '..')) {
+            return response()->json(['error' => 'Invalid branch name.'], 422);
+        }
+
+        $resolved = $this->resolveUserPath($rawPath);
+        $topRes = $this->runGit($resolved, ['rev-parse', '--show-toplevel']);
+        if (! $topRes['ok'] || trim($topRes['stdout']) === '') {
+            return response()->json(['error' => "Not a git repository: {$resolved}"], 400);
+        }
+        $topLevel = trim($topRes['stdout']);
+
+        $verifyRes = $this->runGit($topLevel, ['show-ref', '--verify', '--quiet', "refs/heads/{$branch}"]);
+        if (! $verifyRes['ok']) {
+            return response()->json(['error' => "Branch '{$branch}' does not exist locally."], 404);
+        }
+
+        $process = new Process(['git', 'checkout', $branch], $topLevel);
+        $process->setTimeout(8);
+        $process->run();
+
+        if (! $process->isSuccessful()) {
+            $err = trim($process->getErrorOutput()) ?: "Could not switch HEAD to {$branch}.";
+
+            return response()->json(['error' => $err], 422);
+        }
+
+        return response()->json([
+            'ok' => true,
+            'branch' => $branch,
         ]);
     }
 

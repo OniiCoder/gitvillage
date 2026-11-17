@@ -130,6 +130,7 @@ export async function loadGitHubRepoVillage(
   repo: string,
   token?: string,
   userSignal?: AbortSignal,
+  targetBranch?: string,
 ): Promise<RepoVillageGraph> {
   const repoMeta = await ghFetch<GhRepoResponse>(
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
@@ -138,15 +139,16 @@ export async function loadGitHubRepoVillage(
   );
 
   const defaultBranch = repoMeta.default_branch || 'main';
+  const activeBranch = targetBranch?.trim() || defaultBranch;
 
   const [defaultCommitsRaw, branchListRaw] = await Promise.all([
     ghFetch<GhCommitItem[]>(
-      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits?sha=${encodeURIComponent(defaultBranch)}&per_page=24`,
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits?sha=${encodeURIComponent(activeBranch)}&per_page=24`,
       token,
       userSignal,
     ),
     ghFetch<GhBranchItem[]>(
-      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches?per_page=15`,
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches?per_page=40`,
       token,
       userSignal,
     ).catch(() => [] as GhBranchItem[]),
@@ -156,14 +158,17 @@ export async function loadGitHubRepoVillage(
   const defaultCommits: CommitData[] = [];
 
   for (const item of defaultCommitsRaw) {
-    const c = toCommitData(item, defaultBranch);
+    const c = toCommitData(item, activeBranch);
     commitsBySha.set(c.sha, c);
     defaultCommits.push(c);
   }
 
-  // Pick up to 4 non-default branches whose tip SHA isn't already on defaultBranch
-  const extraBranches = branchListRaw
-    .filter((b) => b.name !== defaultBranch && !commitsBySha.has(b.commit.sha))
+  // Pick up to 4 non-active branches whose tip SHA isn't already on activeBranch (prioritizing repo defaultBranch)
+  const sortedBranchCandidates = branchListRaw.toSorted((a, b) =>
+    a.name === defaultBranch ? -1 : b.name === defaultBranch ? 1 : 0,
+  );
+  const extraBranches = sortedBranchCandidates
+    .filter((b) => b.name !== activeBranch && !commitsBySha.has(b.commit.sha))
     .slice(0, 4);
 
   const branchResults = await Promise.all(
@@ -183,7 +188,7 @@ export async function loadGitHubRepoVillage(
 
   const branches: BranchIslandData[] = [
     {
-      name: defaultBranch,
+      name: activeBranch,
       isDefault: true,
       color: BRANCH_PALETTE[0],
       commits: defaultCommits.toReversed(), // oldest -> newest
@@ -283,11 +288,22 @@ export async function loadGitHubRepoVillage(
     }
   }
 
+  const allBranches = Array.from(
+    new Set([
+      defaultBranch,
+      activeBranch,
+      ...branchListRaw.map((b) => b.name),
+      ...branches.map((b) => b.name),
+    ]),
+  );
+
   return {
     owner: repoMeta.owner.login,
     repo: repoMeta.name,
     description: repoMeta.description || `Floating 3D commit village for ${repoMeta.owner.login}/${repoMeta.name}`,
     defaultBranch,
+    currentBranch: activeBranch,
+    allBranches,
     stars: repoMeta.stargazers_count ?? 0,
     isDemo: false,
     branches,

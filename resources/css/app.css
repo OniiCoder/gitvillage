@@ -289,10 +289,245 @@
     background: var(--material-inset);
     padding: 0.18rem 0.58rem;
     border-radius: var(--radius-capsule);
-    max-inline-size: 13.5rem;
+    max-inline-size: 9.5rem;
     min-inline-size: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* Topbar Branch Switcher Pill & Viewport-Aware Popover */
+  .branch-pill-btn {
+    min-block-size: 1.72rem;
+    max-inline-size: 10.5rem;
+    padding-inline: 0.52rem 0.44rem;
+    border-radius: var(--radius-capsule);
+    border: none;
+    background: rgba(255, 255, 255, 0.1);
+    box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16);
+    color: var(--ink-primary);
+    font-family: var(--font-mono);
+    font-size: 0.73rem;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    cursor: pointer;
+    flex: none;
+    min-inline-size: 0;
+  }
+
+  .branch-pill-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .branch-pill-btn[aria-expanded='true'] {
+    background: rgba(255, 255, 255, 0.18);
+    box-shadow: inset 0 0 0 1px var(--apple-blue);
+  }
+
+  @media (hover: hover) {
+    .branch-pill-btn:hover:not(:disabled):not([aria-expanded='true']) {
+      background: rgba(255, 255, 255, 0.16);
+    }
+  }
+
+  .branch-color-dot {
+    inline-size: 0.44rem;
+    block-size: 0.44rem;
+    border-radius: 50%;
+    flex: none;
+  }
+
+  .branch-pill-icon {
+    color: var(--ink-secondary);
+    flex: none;
+  }
+
+  .branch-pill-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-inline-size: 0;
+  }
+
+  .branch-pill-caret {
+    color: var(--ink-tertiary);
+    flex: none;
+  }
+
+  .branch-popover {
+    margin: 4.3rem auto auto;
+    inline-size: min(21.5rem, calc(100vw - 1.5rem));
+    max-block-size: min(26rem, calc(100vh - 6rem));
+    overflow: hidden;
+    padding: 0.85rem;
+  }
+
+  .branch-popover:where(:popover-open, .\:popover-open) {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+
+  @supports (position-area: block-end) {
+    .branch-popover {
+      inset: auto;
+      margin: 0.55rem 0 0;
+      position-area: block-end span-inline-end;
+      position-try-fallbacks: flip-block, flip-inline, flip-block flip-inline;
+    }
+  }
+
+  .branch-popover-head h3 {
+    margin: 0;
+    font-size: 0.86rem;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+  }
+
+  .branch-search-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-block-size: 1.95rem;
+    padding-inline: 0.62rem;
+    border-radius: var(--radius-capsule);
+    background: rgba(0, 0, 0, 0.28);
+    box-shadow: inset 0 0 0 0.5px var(--hairline-border);
+    flex: none;
+  }
+
+  .branch-search-wrap:focus-within {
+    box-shadow: inset 0 0 0 1.5px var(--apple-blue);
+  }
+
+  .branch-search-wrap input {
+    flex: 1;
+    min-inline-size: 0;
+    border: none;
+    background: transparent;
+    color: var(--ink-primary);
+    font-size: 0.78rem;
+    outline: none;
+  }
+
+  .branch-options-list {
+    flex: 1;
+    min-block-size: 0;
+    overflow-y: auto;
+    border-radius: var(--radius-group);
+    background: var(--material-inset);
+    box-shadow: inset 0 0 0 0.5px var(--hairline-subtle);
+  }
+
+  .branch-empty-msg {
+    margin: 0;
+    padding: 0.8rem;
+    font-size: 0.76rem;
+    color: var(--ink-tertiary);
+    text-align: center;
+  }
+
+  .branch-option-row {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding-inline-end: 0.42rem;
+  }
+
+  .branch-option-row:not(:last-child) {
+    border-block-end: 0.5px solid var(--hairline-subtle);
+  }
+
+  .branch-option-row.is-current {
+    background: color-mix(in oklab, var(--apple-blue) 18%, transparent);
+  }
+
+  @media (hover: hover) {
+    .branch-option-row:hover:not(.is-current) {
+      background: rgba(255, 255, 255, 0.05);
+    }
+  }
+
+  .branch-option-btn {
+    flex: 1;
+    min-inline-size: 0;
+    border: none;
+    background: transparent;
+    color: var(--ink-primary);
+    padding: 0.48rem 0.35rem 0.48rem 0.52rem;
+    display: flex;
+    align-items: center;
+    gap: 0.42rem;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .branch-check-slot {
+    inline-size: 0.9rem;
+    display: inline-grid;
+    place-items: center;
+    color: #70b8ff;
+    flex: none;
+  }
+
+  .branch-option-name {
+    flex: 1;
+    min-inline-size: 0;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .branch-option-badges {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28rem;
+    flex: none;
+  }
+
+  .branch-tag {
+    font-size: 0.63rem;
+    font-weight: 600;
+    padding: 0.1rem 0.38rem;
+    border-radius: var(--radius-capsule);
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--ink-secondary);
+  }
+
+  .branch-tag-head {
+    background: color-mix(in oklab, var(--apple-green) 20%, transparent);
+    color: #7ee787;
+  }
+
+  .branch-commit-count {
+    font-family: var(--font-mono);
+    font-size: 0.67rem;
+    color: var(--ink-tertiary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .branch-checkout-btn {
+    font-size: 0.67rem;
+    font-weight: 600;
+    padding: 0.18rem 0.48rem;
+    border-radius: var(--radius-capsule);
+    border: none;
+    background: rgba(255, 255, 255, 0.11);
+    color: var(--ink-secondary);
+    cursor: pointer;
+    flex: none;
+  }
+
+  @media (hover: hover) {
+    .branch-checkout-btn:hover {
+      background: var(--apple-blue);
+      color: #fff;
+    }
   }
 
   /* Apple Freeform / Pages Style Overlapping Collaborator Avatar Stack */
@@ -367,9 +602,9 @@
     position: relative;
     display: flex;
     align-items: center;
-    flex: 1 1 18.5rem;
-    min-inline-size: 11rem;
-    max-inline-size: 18.5rem;
+    flex: 1 1 15.5rem;
+    min-inline-size: 9.5rem;
+    max-inline-size: 17.5rem;
     min-block-size: 2.1rem;
     background: rgba(0, 0, 0, 0.24);
     box-shadow: inset 0 0 0 0.5px var(--hairline-border);
@@ -2061,7 +2296,7 @@
   }
 
   dialog::backdrop,
-  [popover]::backdrop {
+  .hud-popover::backdrop {
     background-color: rgb(0 0 0 / 0);
     transition-property: background-color, display, overlay;
     transition-duration: 0.22s;
@@ -2083,14 +2318,16 @@
         transform: scale(0.96) translateY(4px);
       }
     }
+  }
 
-    &::backdrop {
-      background-color: rgb(0 0 0 / 0.36);
-      backdrop-filter: blur(4px);
+  :is(dialog[open], .hud-popover:where(:popover-open, .\:popover-open)):where(
+      :not([data-closing])
+    )::backdrop {
+    background-color: rgb(0 0 0 / 0.36);
+    backdrop-filter: blur(4px);
 
-      @starting-style {
-        background-color: transparent;
-      }
+    @starting-style {
+      background-color: transparent;
     }
   }
 
@@ -2114,7 +2351,9 @@
     .seg-btn[aria-pressed='true'],
     .clan-avatar-btn[aria-pressed='true'],
     .filter-pill.is-active,
-    .diff-sidebar-item.is-selected {
+    .diff-sidebar-item.is-selected,
+    .branch-option-row.is-current,
+    .branch-pill-btn[aria-expanded='true'] {
       outline: 2px solid Highlight;
       outline-offset: -2px;
     }

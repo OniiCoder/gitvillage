@@ -12,10 +12,12 @@ class VillageController extends Controller
     {
         $repoQuery = $request->query('repo');
         $localQuery = app()->isLocal() ? $request->query('local') : null;
+        $branchQuery = $request->query('branch');
 
         return Inertia::render('Village/Index', [
             'initialRepo' => is_string($repoQuery) && $repoQuery !== '' ? $repoQuery : null,
             'initialLocal' => is_string($localQuery) && $localQuery !== '' ? $localQuery : null,
+            'initialBranch' => is_string($branchQuery) && $branchQuery !== '' ? $branchQuery : null,
             'directorMode' => $request->has('director'),
             'localServerEnabled' => app()->isLocal(),
             'nativeFinderSupported' => app()->isLocal() && PHP_OS_FAMILY === 'Darwin',
@@ -25,9 +27,12 @@ class VillageController extends Controller
 
     public function github(Request $request, string $owner, string $repo): Response
     {
+        $branchQuery = $request->query('branch');
+
         return Inertia::render('Village/Index', [
             'initialRepo' => "{$owner}/{$repo}",
             'initialLocal' => null,
+            'initialBranch' => is_string($branchQuery) && $branchQuery !== '' ? $branchQuery : null,
             'directorMode' => $request->has('director'),
             'localServerEnabled' => app()->isLocal(),
             'nativeFinderSupported' => app()->isLocal() && PHP_OS_FAMILY === 'Darwin',

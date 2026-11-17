@@ -61,6 +61,8 @@ export interface RepoVillageGraph {
   description: string;
   defaultBranch: string;
   currentBranch?: string;
+  headBranch?: string;
+  allBranches?: string[];
   stars: number;
   isDemo?: boolean;
   isLocal?: boolean;
@@ -187,6 +189,7 @@ export interface ShowcaseRepo {
 export interface VillagePageProps {
   initialRepo: string | null;
   initialLocal: string | null;
+  initialBranch?: string | null;
   directorMode: boolean;
   localServerEnabled: boolean;
   nativeFinderSupported: boolean;

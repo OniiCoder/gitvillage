@@ -620,6 +620,8 @@ export function createDemoRepoGraph(): RepoVillageGraph {
     repo: 'sky-village',
     description: 'Built-in interactive demo repo — click any commit villager or paste any public GitHub repo above!',
     defaultBranch: 'main',
+    currentBranch: 'main',
+    allBranches: [...branchOrder],
     stars: 1420,
     isDemo: true,
     branches,

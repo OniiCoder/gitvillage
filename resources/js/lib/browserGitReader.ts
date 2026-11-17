@@ -1114,6 +1114,7 @@ export function createSourceFromFileList(files: FileList | File[]): BrowserRepoS
 
 export async function loadBrowserGitRepoVillage(
   source: BrowserRepoSource,
+  targetBranch?: string,
 ): Promise<RepoVillageGraph> {
   const headCheck = await source.readFile('.git/HEAD');
   if (!headCheck) {
@@ -1125,15 +1126,29 @@ export async function loadBrowserGitRepoVillage(
   const store = new BrowserGitObjectStore(source);
   const { currentBranch, headSha, branchTips } = await collectRefs(source);
 
-  // Order branches so currentBranch comes first, up to 6 branches
+  const allBranches = Array.from(branchTips.keys()).toSorted((a, b) =>
+    a === currentBranch ? -1 : b === currentBranch ? 1 : a.localeCompare(b),
+  );
+  const activeBranch =
+    targetBranch && branchTips.has(targetBranch)
+      ? targetBranch
+      : currentBranch || allBranches[0] || 'main';
+
+  // Order branches so activeBranch comes first (followed by currentBranch), up to 6 branches
   const branchEntries = Array.from(branchTips.entries())
-    .toSorted(([a], [b]) => (a === currentBranch ? -1 : b === currentBranch ? 1 : a.localeCompare(b)))
+    .toSorted(([a], [b]) => {
+      if (a === activeBranch) return -1;
+      if (b === activeBranch) return 1;
+      if (a === currentBranch) return -1;
+      if (b === currentBranch) return 1;
+      return a.localeCompare(b);
+    })
     .slice(0, 6);
 
   const commitsBySha = new Map<string, CommitData>();
   const rawCommitsBySha = new Map<string, RawParsedCommit>();
   const branches: BranchIslandData[] = [];
-  const defaultBranch = currentBranch || branchEntries[0]?.[0] || 'main';
+  const defaultBranch = activeBranch;
 
   let colorIdx = 0;
   for (const [branchName, tipSha] of branchEntries) {
@@ -1428,8 +1443,10 @@ export async function loadBrowserGitRepoVillage(
     owner: 'local',
     repo: source.rootName,
     description: `Local repository (${source.rootName}) — read privately in your browser`,
-    defaultBranch,
+    defaultBranch: currentBranch || defaultBranch,
     currentBranch: defaultBranch,
+    headBranch: currentBranch,
+    allBranches: allBranches.length > 0 ? allBranches : [defaultBranch],
     stars: 0,
     isDemo: false,
     isLocal: true,

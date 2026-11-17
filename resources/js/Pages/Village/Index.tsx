@@ -38,6 +38,7 @@ function createInitialSnapshot(): VillageEngineSnapshot {
 export default function VillageIndex({
   initialRepo,
   initialLocal,
+  initialBranch,
   directorMode,
   localServerEnabled,
   nativeFinderSupported,
@@ -106,7 +107,7 @@ export default function VillageIndex({
         }
       },
       onToast: showToast,
-      onSyncUrl: ({ repo, local }) => {
+      onSyncUrl: ({ repo, local, branch }) => {
         const url = new URL(window.location.href);
         if (repo) {
           url.pathname = `/gh/${repo}`;
@@ -121,6 +122,11 @@ export default function VillageIndex({
             url.searchParams.delete('local');
           }
         }
+        if (branch) {
+          url.searchParams.set('branch', branch);
+        } else {
+          url.searchParams.delete('branch');
+        }
         window.history.replaceState({}, '', url);
       },
       onRequestLocalModal: openLocalModal,
@@ -129,9 +135,11 @@ export default function VillageIndex({
     engineRef.current = engine;
 
     if (localServerEnabled && initialLocal) {
-      void engine.loadLocalRepo(initialLocal, false);
+      void engine.loadLocalRepo(initialLocal, false, initialBranch ?? undefined);
     } else if (initialRepo) {
-      void engine.loadRepoBySpec(initialRepo, false);
+      void engine.loadRepoBySpec(initialRepo, false, initialBranch ?? undefined);
+    } else if (initialBranch) {
+      void engine.switchBranch(initialBranch);
     }
 
     const onWindowDragOver = (e: DragEvent) => {
@@ -177,6 +185,9 @@ export default function VillageIndex({
     const g = snapshot.graph;
     if (!g.isDemo && !g.isLocal && g.owner && g.repo) {
       shareUrl.pathname = `/gh/${g.owner}/${g.repo}`;
+    }
+    if (!g.isLocal && g.currentBranch && g.currentBranch !== g.defaultBranch) {
+      shareUrl.searchParams.set('branch', g.currentBranch);
     }
 
     try {
@@ -282,6 +293,7 @@ export default function VillageIndex({
         timeOfDay={snapshot.timeOfDay}
         muted={snapshot.muted}
         onOpenLocalModal={openLocalModal}
+        onSelectBranch={(branch, opts) => void engineRef.current?.switchBranch(branch, opts)}
         onToggleAuthor={(key) => engineRef.current?.toggleAuthorSpotlight(key)}
         onToggleWalkMode={() => engineRef.current?.toggleWalkMode()}
         onCycleSky={() => engineRef.current?.cycleAtmosphere()}

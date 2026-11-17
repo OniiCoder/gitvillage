@@ -80,9 +80,15 @@ export async function browseLocalDirectory(
   return data;
 }
 
+function csrfHeaders(): Record<string, string> {
+  const token = document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content;
+  return token ? { 'X-CSRF-TOKEN': token } : {};
+}
+
 export async function pickNativeMacFolder(): Promise<{ path?: string; cancelled?: boolean }> {
   const res = await fetch('/api/pick-native-folder', {
     method: 'POST',
+    headers: csrfHeaders(),
     signal: AbortSignal.timeout(120_000),
   });
   const data = (await res.json()) as { path?: string; cancelled?: boolean; error?: string };
@@ -92,11 +98,30 @@ export async function pickNativeMacFolder(): Promise<{ path?: string; cancelled?
   return data;
 }
 
+export async function checkoutLocalBranch(localPath: string, branch: string): Promise<void> {
+  const res = await fetch('/api/local-checkout', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      ...csrfHeaders(),
+    },
+    body: JSON.stringify({ path: localPath, branch }),
+    signal: AbortSignal.timeout(8000),
+  });
+  const data = (await res.json()) as { ok?: boolean; error?: string };
+  if (!res.ok || data.error) {
+    throw new Error(data.error || `Could not checkout branch "${branch}".`);
+  }
+}
+
 interface LocalRepoApiResponse {
   owner: string;
   repo: string;
   localPath: string;
   currentBranch: string;
+  headBranch?: string;
+  allBranches?: string[];
   branches: Array<{
     name: string;
     isCurrent: boolean;
@@ -121,13 +146,20 @@ interface LocalRepoApiResponse {
 export async function loadLocalRepoVillage(
   rawPath: string,
   userSignal?: AbortSignal,
+  targetBranch?: string,
 ): Promise<RepoVillageGraph> {
   const cleanPath = rawPath.trim().replace(/^local:/i, '') || '.';
   const signal = userSignal
     ? AbortSignal.any([userSignal, AbortSignal.timeout(10_000)])
     : AbortSignal.timeout(10_000);
 
-  const res = await fetch(`/api/local-repo?path=${encodeURIComponent(cleanPath)}`, { signal });
+  const url = new URL('/api/local-repo', window.location.origin);
+  url.searchParams.set('path', cleanPath);
+  if (targetBranch?.trim()) {
+    url.searchParams.set('branch', targetBranch.trim());
+  }
+
+  const res = await fetch(url, { signal });
   const payload = (await res.json()) as LocalRepoApiResponse;
 
   if (!res.ok || payload.error) {
@@ -243,12 +275,21 @@ export async function loadLocalRepoVillage(
     return a.filename.localeCompare(b.filename);
   });
 
+  const allBranches = Array.from(
+    new Set([
+      ...(payload.allBranches ?? []),
+      ...branches.map((b) => b.name),
+    ]),
+  );
+
   return {
     owner: payload.owner,
     repo: payload.repo,
     description: `Local repository at ${payload.localPath}`,
     defaultBranch,
-    currentBranch: payload.currentBranch,
+    currentBranch: payload.currentBranch || defaultBranch,
+    headBranch: payload.headBranch ?? payload.currentBranch,
+    allBranches,
     stars: 0,
     isDemo: false,
     isLocal: true,

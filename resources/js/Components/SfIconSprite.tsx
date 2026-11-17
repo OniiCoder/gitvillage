@@ -297,6 +297,26 @@ export function SfIconSprite() {
           strokeLinejoin="round"
         />
       </symbol>
+      <symbol id="sf-chevron-down" viewBox="0 0 20 20">
+        <path
+          d="m5.5 7.8 4.5 4.5 4.5-4.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.75"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </symbol>
+      <symbol id="sf-check" viewBox="0 0 20 20">
+        <path
+          d="m4.5 10.5 3.6 3.6 7.4-7.8"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.85"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </symbol>
     </svg>
   );
 }

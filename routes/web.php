@@ -17,5 +17,6 @@ Route::prefix('api')
         Route::get('/browse-dirs', [LocalGitController::class, 'browse'])->name('api.browse-dirs');
         Route::post('/pick-native-folder', [LocalGitController::class, 'pickNativeFolder'])->name('api.pick-native-folder');
         Route::get('/local-repo', [LocalGitController::class, 'inspect'])->name('api.local-repo');
+        Route::post('/local-checkout', [LocalGitController::class, 'checkout'])->name('api.local-checkout');
         Route::get('/local-commit-detail', [LocalGitController::class, 'commitDetail'])->name('api.local-commit-detail');
     });

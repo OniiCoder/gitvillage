@@ -21,12 +21,13 @@ class VillagePageTest extends TestCase
 
     public function test_github_deep_link_route_passes_initial_repo_prop(): void
     {
-        $response = $this->get('/gh/laravel/laravel');
+        $response = $this->get('/gh/laravel/laravel?branch=11.x');
 
         $response->assertOk()->assertInertia(
             fn (Assert $page) => $page
                 ->component('Village/Index')
-                ->where('initialRepo', 'laravel/laravel'),
+                ->where('initialRepo', 'laravel/laravel')
+                ->where('initialBranch', '11.x'),
         );
     }
 
@@ -36,6 +37,10 @@ class VillagePageTest extends TestCase
 
         $this->getJson('/api/local-repos')->assertForbidden();
         $this->getJson('/api/local-repo?path=.')->assertForbidden();
+        $this->withSession(['_token' => 'csrf-test-token'])
+            ->withHeader('X-CSRF-TOKEN', 'csrf-test-token')
+            ->postJson('/api/local-checkout', ['path' => '.', 'branch' => 'main'])
+            ->assertForbidden();
     }
 
     public function test_local_git_endpoints_inspect_repository_in_local_environment(): void
@@ -53,6 +58,8 @@ class VillagePageTest extends TestCase
                 'repo',
                 'localPath',
                 'currentBranch',
+                'headBranch',
+                'allBranches',
                 'branches',
                 'gateVisitors',
             ]);
@@ -71,5 +78,13 @@ class VillagePageTest extends TestCase
 
         $firstPatch = (string) $detailRes->json('files.0.patch');
         $this->assertStringContainsString('@@', $firstPatch);
+
+        $currentBranch = (string) $repoRes->json('currentBranch');
+        $this->assertContains($currentBranch, $repoRes->json('allBranches'));
+
+        $this->withSession(['_token' => 'csrf-test-token'])
+            ->withHeader('X-CSRF-TOKEN', 'csrf-test-token')
+            ->postJson('/api/local-checkout', ['path' => '.', 'branch' => 'non-existent-branch-xyz'])
+            ->assertNotFound();
     }
 }

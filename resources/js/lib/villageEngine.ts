@@ -7,6 +7,7 @@ import {
 import { createDemoRepoGraph } from '@/lib/demoRepo';
 import { hydrateCommitDetail, loadGitHubRepoVillage, parseRepoInput } from '@/lib/githubLoader';
 import {
+  checkoutLocalBranch,
   hydrateLocalCommitDetail,
   isLocalPathInput,
   loadLocalRepoVillage,
@@ -26,7 +27,6 @@ import {
 } from '@/lib/villagerMesh';
 import { type BuiltWorld, buildVillageWorld } from '@/lib/worldBuilder';
 import type {
-  BridgeLayout,
   CameraMode,
   CommitData,
   GateVisitorEntity,
@@ -59,7 +59,11 @@ export interface VillageEngineCallbacks {
   getGithubToken: () => string;
   onStateChange: (snapshot: VillageEngineSnapshot) => void;
   onToast: (message: string, isError?: boolean, durationMs?: number) => void;
-  onSyncUrl: (params: { repo?: string | null; local?: string | null }) => void;
+  onSyncUrl: (params: {
+    repo?: string | null;
+    local?: string | null;
+    branch?: string | null;
+  }) => void;
   onRequestLocalModal: () => void;
 }
 
@@ -496,6 +500,111 @@ export class VillageEngine {
     this.emit();
   }
 
+  public flyToBranchIsland(branchName: string): boolean {
+    if (!this.builtWorld) return false;
+    const isl = this.builtWorld.islands.find((item) => item.branch.name === branchName);
+    if (!isl) return false;
+
+    this.followVillager = false;
+    this.activeGraph.currentBranch = branchName;
+
+    if (this.cameraMode === 'walk') {
+      const p = isl.pathCurve.getPointAt(0.5);
+      this.explorer.root.position.set(p.x, p.y, p.z + 0.5);
+      this.explorerVelocity.y = 0;
+      this.explorerVelocity.grounded = true;
+      this.camera.position.set(p.x, p.y + 4.8, p.z + 8.5);
+      this.controls.target.set(p.x, p.y + 1.0, p.z);
+    } else if (isl.branch.isDefault) {
+      this.flyToOverview();
+    } else {
+      const dist = Math.max(13, isl.length * 0.72);
+      this.cameraFlight = {
+        targetLook: new THREE.Vector3(isl.center.x, isl.center.y + 1.0, isl.center.z),
+        targetPos: new THREE.Vector3(
+          isl.center.x - dist * 0.22,
+          isl.center.y + dist * 0.52,
+          isl.center.z + dist * 0.86,
+        ),
+        active: true,
+      };
+    }
+
+    for (const v of this.villagers) {
+      if (v.island === isl && v.jumpY === 0) {
+        v.jumpVelocity = 5.4;
+        if (Math.random() < 0.6) {
+          this.triggerEmote(`c:${v.commit.sha}`, v, '👋', 1.8);
+        }
+      }
+    }
+
+    sound.playPop(587.33);
+    this.emit();
+    return true;
+  }
+
+  public async switchBranch(
+    branchName: string,
+    options: { checkoutGitHead?: boolean } = {},
+  ): Promise<void> {
+    const target = branchName.trim();
+    if (!target) return;
+
+    if (this.activeGraph.isDemo) {
+      const flew = this.flyToBranchIsland(target);
+      if (flew) {
+        const count =
+          this.activeGraph.branches.find((b) => b.name === target)?.commits.length ?? 0;
+        this.cb.onSyncUrl({
+          repo: null,
+          local: null,
+          branch: target === this.activeGraph.defaultBranch ? null : target,
+        });
+        this.cb.onToast(
+          `Branch "${target}" — ${count} commit${count === 1 ? '' : 's'} on island`,
+        );
+      }
+      return;
+    }
+
+    if (this.activeGraph.isLocal) {
+      if (this.activeBrowserSource) {
+        await this.loadBrowserRepoSource(this.activeBrowserSource, target);
+        return;
+      }
+
+      if (this.cb.localServerEnabled && this.activeGraph.localPath) {
+        const localPath = this.activeGraph.localPath;
+        if (options.checkoutGitHead) {
+          this.isLoading = true;
+          this.emit();
+          try {
+            await checkoutLocalBranch(localPath, target);
+            await this.loadLocalRepo(localPath, true, target);
+            this.cb.onToast(`Checked out "${target}" in local Git repository`);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : `Could not checkout "${target}".`;
+            this.cb.onToast(msg, true, 6000);
+          } finally {
+            this.isLoading = false;
+            this.emit();
+          }
+          return;
+        }
+
+        await this.loadLocalRepo(localPath, true, target);
+        return;
+      }
+    }
+
+    await this.loadRepoBySpec(
+      `${this.activeGraph.owner}/${this.activeGraph.repo}`,
+      true,
+      target,
+    );
+  }
+
   public flyToGate(selectFirst = true): void {
     if (!this.builtWorld?.gate) return;
     this.followVillager = false;
@@ -701,21 +810,36 @@ export class VillageEngine {
     this.emit();
   }
 
-  public async loadBrowserRepoSource(source: BrowserRepoSource): Promise<void> {
+  public async loadBrowserRepoSource(
+    source: BrowserRepoSource,
+    targetBranch?: string,
+  ): Promise<void> {
     this.currentLoadController?.abort();
     this.isLoading = true;
     this.emit();
-    this.cb.onToast(`Reading local Git repository "${source.rootName}"…`, false, 0);
+    this.cb.onToast(
+      targetBranch
+        ? `Switching "${source.rootName}" to branch ${targetBranch}…`
+        : `Reading local Git repository "${source.rootName}"…`,
+      false,
+      0,
+    );
 
     try {
-      const graph = await loadBrowserGitRepoVillage(source);
+      const graph = await loadBrowserGitRepoVillage(source, targetBranch);
       this.activeBrowserSource = source;
       const waitingCount = graph.gateVisitors?.length ?? 0;
-      this.rebuildVillageFromGraph(graph, { focusGateOnLoad: waitingCount > 0 });
+      this.rebuildVillageFromGraph(graph, {
+        focusGateOnLoad: !targetBranch && waitingCount > 0,
+      });
       sound.playRepoLoaded();
-      this.cb.onSyncUrl({ repo: null, local: null });
+      this.cb.onSyncUrl({ repo: null, local: null, branch: null });
 
-      if (waitingCount > 0) {
+      if (targetBranch) {
+        this.cb.onToast(
+          `${graph.repo} (${graph.currentBranch}) — ${this.villagers.length} commits loaded`,
+        );
+      } else if (waitingCount > 0) {
         this.cb.onToast(
           `${graph.repo} — ${waitingCount} uncommitted file${waitingCount === 1 ? '' : 's'} waiting at the Village Gate`,
         );
@@ -735,7 +859,11 @@ export class VillageEngine {
     }
   }
 
-  public async loadLocalRepo(pathSpec: string, updateUrl = true): Promise<void> {
+  public async loadLocalRepo(
+    pathSpec: string,
+    updateUrl = true,
+    targetBranch?: string,
+  ): Promise<void> {
     if (!this.cb.localServerEnabled) {
       this.cb.onRequestLocalModal();
       return;
@@ -747,19 +875,37 @@ export class VillageEngine {
     this.currentLoadController = controller;
     this.isLoading = true;
     this.emit();
-    this.cb.onToast('Opening local repository…', false, 0);
+    this.cb.onToast(
+      targetBranch ? `Switching to branch "${targetBranch}"…` : 'Opening local repository…',
+      false,
+      0,
+    );
 
     try {
-      const graph = await loadLocalRepoVillage(pathSpec, controller.signal);
+      const graph = await loadLocalRepoVillage(pathSpec, controller.signal, targetBranch);
       const waitingCount = graph.gateVisitors?.length ?? 0;
-      this.rebuildVillageFromGraph(graph, { focusGateOnLoad: waitingCount > 0 });
+      this.rebuildVillageFromGraph(graph, {
+        focusGateOnLoad: !targetBranch && waitingCount > 0,
+      });
       sound.playRepoLoaded();
 
       if (updateUrl) {
-        this.cb.onSyncUrl({ repo: null, local: graph.localPath ?? pathSpec });
+        const customBranch =
+          graph.currentBranch && graph.currentBranch !== graph.headBranch
+            ? graph.currentBranch
+            : null;
+        this.cb.onSyncUrl({
+          repo: null,
+          local: graph.localPath ?? pathSpec,
+          branch: customBranch,
+        });
       }
 
-      if (waitingCount > 0) {
+      if (targetBranch) {
+        this.cb.onToast(
+          `${graph.repo} · branch "${graph.currentBranch}" (${this.villagers.length} commits)`,
+        );
+      } else if (waitingCount > 0) {
         this.cb.onToast(
           `${graph.repo} — ${waitingCount} uncommitted file${waitingCount === 1 ? '' : 's'} waiting at the Village Gate`,
         );
@@ -790,9 +936,15 @@ export class VillageEngine {
 
     this.isPollingLocal = true;
     try {
+      const pinnedBranch =
+        this.activeGraph.currentBranch &&
+        this.activeGraph.headBranch &&
+        this.activeGraph.currentBranch !== this.activeGraph.headBranch
+          ? this.activeGraph.currentBranch
+          : undefined;
       const freshGraph = this.activeBrowserSource?.dirHandle
-        ? await loadBrowserGitRepoVillage(this.activeBrowserSource)
-        : await loadLocalRepoVillage(this.activeGraph.localPath!);
+        ? await loadBrowserGitRepoVillage(this.activeBrowserSource, pinnedBranch)
+        : await loadLocalRepoVillage(this.activeGraph.localPath!, undefined, pinnedBranch);
       const freshFp = computeLocalGraphFingerprint(freshGraph);
 
       if (freshFp !== this.lastLocalFingerprint) {
@@ -829,9 +981,13 @@ export class VillageEngine {
     }
   }
 
-  public async loadRepoBySpec(spec: string, updateUrl = true): Promise<void> {
+  public async loadRepoBySpec(
+    spec: string,
+    updateUrl = true,
+    targetBranch?: string,
+  ): Promise<void> {
     if (isLocalPathInput(spec)) {
-      await this.loadLocalRepo(spec, updateUrl);
+      await this.loadLocalRepo(spec, updateUrl, targetBranch);
       return;
     }
 
@@ -841,9 +997,17 @@ export class VillageEngine {
     if (spec === 'demo' || spec === 'gitvillage/sky-village') {
       const demo = createDemoRepoGraph();
       this.rebuildVillageFromGraph(demo);
+      if (targetBranch && demo.allBranches?.includes(targetBranch)) {
+        this.flyToBranchIsland(targetBranch);
+      }
       sound.playRepoLoaded();
       if (updateUrl) {
-        this.cb.onSyncUrl({ repo: null, local: null });
+        this.cb.onSyncUrl({
+          repo: null,
+          local: null,
+          branch:
+            targetBranch && targetBranch !== demo.defaultBranch ? targetBranch : null,
+        });
       }
       this.cb.onToast('Showcase Village — gitvillage/sky-village');
       return;
@@ -862,7 +1026,13 @@ export class VillageEngine {
     this.currentLoadController = controller;
     this.isLoading = true;
     this.emit();
-    this.cb.onToast(`Loading ${parsed.owner}/${parsed.repo}…`, false, 0);
+    this.cb.onToast(
+      targetBranch
+        ? `Loading ${parsed.owner}/${parsed.repo} (${targetBranch})…`
+        : `Loading ${parsed.owner}/${parsed.repo}…`,
+      false,
+      0,
+    );
 
     try {
       const graph = await loadGitHubRepoVillage(
@@ -870,16 +1040,24 @@ export class VillageEngine {
         parsed.repo,
         this.cb.getGithubToken(),
         controller.signal,
+        targetBranch,
       );
       this.rebuildVillageFromGraph(graph);
       sound.playRepoLoaded();
 
       if (updateUrl) {
-        this.cb.onSyncUrl({ repo: `${graph.owner}/${graph.repo}`, local: null });
+        this.cb.onSyncUrl({
+          repo: `${graph.owner}/${graph.repo}`,
+          local: null,
+          branch:
+            graph.currentBranch && graph.currentBranch !== graph.defaultBranch
+              ? graph.currentBranch
+              : null,
+        });
       }
 
       this.cb.onToast(
-        `${graph.owner}/${graph.repo} — ${this.villagers.length} commits across ${graph.branches.length} islands`,
+        `${graph.owner}/${graph.repo} (${graph.currentBranch}) — ${this.villagers.length} commits across ${graph.branches.length} islands`,
       );
 
       const recentToHydrate = this.villagers.slice(-8);
