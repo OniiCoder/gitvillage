@@ -29,7 +29,7 @@ export function SfIconSprite() {
           strokeWidth="1.65"
           strokeLinecap="round"
           strokeLinejoin="round"
-          d="M3.2 9.4 10 3.8l6.8 5.6M5.2 8.2v7.2a.8.8 0 0 0 .8.8h8a.8.8 0 0 0 .8-.8V8.2M8.4 16.2v-4.2h3.2v4.2"
+          d="M3 12.5c2.2 1.2 4.8 1.2 7 0 2.2-1.2 4.8-1.2 7 0M5.5 16c1.6.8 3.4.8 5 0 1.6-.8 3.4-.8 5 0M10 4l2.8 5.2H7.2L10 4Z"
         />
       </symbol>
       <symbol id="sf-search" viewBox="0 0 20 20">

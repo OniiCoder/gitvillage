@@ -975,15 +975,19 @@ export class VillageEngine {
     return bestY;
   }
 
-  private findConnectedBridge(branchName: string): { bridge: BridgeLayout; dir: 1 | -1 } | null {
-    if (!this.builtWorld) return null;
-    const candidates: Array<{ bridge: BridgeLayout; dir: 1 | -1 }> = [];
+  private isNearAnyBridgeLanding(pos: THREE.Vector3): boolean {
+    if (!this.builtWorld) return false;
     for (const br of this.builtWorld.bridges) {
-      if (br.fromBranch === branchName) candidates.push({ bridge: br, dir: 1 });
-      else if (br.toBranch === branchName) candidates.push({ bridge: br, dir: -1 });
+      const startPt = br.curve.getPointAt(0);
+      const endPt = br.curve.getPointAt(1);
+      if (
+        Math.hypot(pos.x - startPt.x, pos.z - startPt.z) < 1.85 ||
+        Math.hypot(pos.x - endPt.x, pos.z - endPt.z) < 1.85
+      ) {
+        return true;
+      }
     }
-    if (candidates.length === 0) return null;
-    return candidates[Math.floor(Math.random() * candidates.length)];
+    return false;
   }
 
   private bindEvents(): void {
@@ -1393,12 +1397,14 @@ export class VillageEngine {
       }
 
       v.behaviorTimer -= dt;
-      if (v.behaviorTimer <= 0 && v.behavior !== 'bridge_walk') {
+      if (v.behaviorTimer <= 0) {
+        v.activeBridge = undefined;
+        const nearBridgeHead = this.isNearAnyBridgeLanding(v.root.position);
         const roll = Math.random();
-        if (roll < 0.48) {
+        if (nearBridgeHead || roll < 0.54) {
           v.behavior = 'stroll';
           v.behaviorTimer = 3.2 + Math.random() * 4.0;
-        } else if (roll < 0.73) {
+        } else if (roll < 0.79) {
           v.behavior = 'jump_joy';
           v.behaviorTimer = 2.0 + Math.random() * 2.2;
           const emotes = getRoleMeta(v.commit.kind).defaultEmotes;
@@ -1410,28 +1416,13 @@ export class VillageEngine {
               1.8,
             );
           }
-        } else if (roll < 0.88) {
+        } else if (roll < 0.93) {
           v.behavior = 'tinker';
           v.behaviorTimer = 2.2 + Math.random() * 2.0;
-        } else if (roll < 0.94) {
+        } else {
           v.behavior = 'spin';
           v.behaviorTimer = 1.4;
           v.jumpVelocity = 6.2;
-        } else {
-          const conn = this.findConnectedBridge(v.island.branch.name);
-          if (conn) {
-            v.behavior = 'bridge_walk';
-            v.activeBridge = {
-              curve: conn.bridge.curve,
-              t: conn.dir === 1 ? 0.02 : 0.98,
-              dir: conn.dir,
-            };
-            v.lateralOffset = conn.dir * 0.22;
-            v.behaviorTimer = 8.0;
-          } else {
-            v.behavior = 'stroll';
-            v.behaviorTimer = 3.0;
-          }
         }
       }
 
