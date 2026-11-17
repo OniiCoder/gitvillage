@@ -344,7 +344,8 @@ function localGitVillagePlugin(): Plugin {
 
             const REC_SEP = '\x1e';
             const FLD_SEP = '\x1f';
-            const logFormat = `%H${FLD_SEP}%P${FLD_SEP}%an${FLD_SEP}%ae${FLD_SEP}%aI${FLD_SEP}%s${FLD_SEP}%b${REC_SEP}`;
+            const STAT_SEP = '\x1d';
+            const logFormat = `${REC_SEP}%H${FLD_SEP}%P${FLD_SEP}%an${FLD_SEP}%ae${FLD_SEP}%aI${FLD_SEP}%s${FLD_SEP}%b${STAT_SEP}`;
 
             const branchesPayload: Array<{
               name: string;
@@ -357,6 +358,14 @@ function localGitVillagePlugin(): Plugin {
                 timestamp: string;
                 subject: string;
                 body: string;
+                filesCount: number;
+                stats: { additions: number; deletions: number; total: number };
+                files: Array<{
+                  filename: string;
+                  status: 'added' | 'modified' | 'removed' | 'renamed';
+                  additions: number;
+                  deletions: number;
+                }>;
               }>;
             }> = [];
 
@@ -367,26 +376,84 @@ function localGitVillagePlugin(): Plugin {
                 b.name,
                 `-n`,
                 limit,
+                '--numstat',
                 `--format=${logFormat}`,
               ]).catch(() => '');
 
-              const commits = rawLog
+              const rawChunks = rawLog
                 .split(REC_SEP)
                 .map((chunk) => chunk.trim())
-                .filter(Boolean)
-                .map((chunk) => {
+                .filter(Boolean);
+
+              const commits = await Promise.all(
+                rawChunks.map(async (chunk) => {
+                  const [headerPart, statPart = ''] = chunk.split(STAT_SEP);
                   const [sha, parentsStr, authorName, authorEmail, timestamp, subject, body] =
-                    chunk.split(FLD_SEP);
+                    headerPart.split(FLD_SEP);
+                  const cleanSha = sha.trim();
+                  const parents = (parentsStr ?? '').trim().split(/\s+/).filter(Boolean);
+
+                  let numstatBlock = statPart;
+                  // For merge commits, git log --numstat omits file lines by default; diff against first parent
+                  if (!numstatBlock.trim() && parents.length > 1) {
+                    numstatBlock = await runGit(topLevel, [
+                      'diff',
+                      '--numstat',
+                      `${parents[0]}..${cleanSha}`,
+                    ]).catch(() => '');
+                  }
+
+                  let totalAdd = 0;
+                  let totalDel = 0;
+                  const parsedFiles: Array<{
+                    filename: string;
+                    status: 'added' | 'modified' | 'removed' | 'renamed';
+                    additions: number;
+                    deletions: number;
+                  }> = [];
+
+                  for (const sLine of numstatBlock.split('\n')) {
+                    if (!sLine.trim()) continue;
+                    const parts = sLine.split('\t');
+                    if (parts.length >= 3) {
+                      const additions = Number.parseInt(parts[0], 10) || 0;
+                      const deletions = Number.parseInt(parts[1], 10) || 0;
+                      const filename = parts.slice(2).join('\t').trim();
+                      totalAdd += additions;
+                      totalDel += deletions;
+                      parsedFiles.push({
+                        filename,
+                        status: filename.includes('=>')
+                          ? 'renamed'
+                          : deletions === 0 && additions > 0
+                            ? 'added'
+                            : additions === 0 && deletions > 0
+                              ? 'removed'
+                              : 'modified',
+                        additions,
+                        deletions,
+                      });
+                    }
+                  }
+
                   return {
-                    sha: sha.trim(),
-                    parents: (parentsStr ?? '').trim().split(/\s+/).filter(Boolean),
+                    sha: cleanSha,
+                    parents,
                     authorName: (authorName ?? 'Developer').trim(),
                     authorEmail: (authorEmail ?? '').trim(),
                     timestamp: (timestamp ?? new Date().toISOString()).trim(),
                     subject: (subject ?? 'Commit').trim(),
                     body: (body ?? '').trim(),
+                    filesCount: parsedFiles.length,
+                    stats: {
+                      additions: totalAdd,
+                      deletions: totalDel,
+                      total: totalAdd + totalDel,
+                    },
+                    files: parsedFiles.slice(0, 40),
                   };
-                });
+                }),
+              );
 
               branchesPayload.push({
                 name: b.name,

@@ -293,7 +293,10 @@ export async function loadGitHubRepoVillage(
   };
 }
 
-const detailCache = new Map<string, { stats: CommitData['stats']; files: CommitFileChange[] }>();
+const detailCache = new Map<
+  string,
+  { filesCount: number; stats: CommitData['stats']; files: CommitFileChange[] }
+>();
 
 export async function hydrateCommitDetail(
   owner: string,
@@ -305,6 +308,7 @@ export async function hydrateCommitDetail(
   const key = `${owner}/${repo}/${commit.sha}`;
   const cached = detailCache.get(key);
   if (cached) {
+    commit.filesCount = cached.filesCount;
     commit.stats = cached.stats;
     commit.files = cached.files;
     return;
@@ -315,8 +319,10 @@ export async function hydrateCommitDetail(
     token,
   );
 
+  const rawFiles = detail.files ?? [];
+  const filesCount = rawFiles.length;
   const stats = detail.stats ?? { additions: 0, deletions: 0, total: 0 };
-  const files: CommitFileChange[] = (detail.files ?? []).slice(0, 35).map((f) => ({
+  const files: CommitFileChange[] = rawFiles.slice(0, 35).map((f) => ({
     filename: f.filename,
     status:
       f.status === 'added' || f.status === 'removed' || f.status === 'renamed'
@@ -326,7 +332,8 @@ export async function hydrateCommitDetail(
     deletions: f.deletions,
   }));
 
-  detailCache.set(key, { stats, files });
+  detailCache.set(key, { filesCount, stats, files });
+  commit.filesCount = filesCount;
   commit.stats = stats;
   commit.files = files;
 }

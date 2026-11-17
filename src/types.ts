@@ -34,6 +34,7 @@ export interface CommitData {
   children: string[];
   kind: CommitKind;
   htmlUrl?: string;
+  filesCount?: number;
   stats?: {
     additions: number;
     deletions: number;
@@ -111,6 +112,8 @@ export interface VillagerEntity {
   rightArm: THREE.Object3D;
   leftLeg: THREE.Object3D;
   rightLeg: THREE.Object3D;
+  cargoGroup: THREE.Group;
+  burden: number;
   auraRing: THREE.Mesh;
   filterBeam: THREE.Mesh;
   hitBox: THREE.Mesh;
@@ -143,6 +146,8 @@ export interface GateVisitorEntity {
   rightArm: THREE.Object3D;
   leftLeg: THREE.Object3D;
   rightLeg: THREE.Object3D;
+  cargoGroup: THREE.Group;
+  burden: number;
   ticketMesh?: THREE.Object3D;
   auraRing: THREE.Mesh;
   hitBox: THREE.Mesh;

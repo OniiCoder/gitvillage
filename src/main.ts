@@ -26,9 +26,12 @@ import {
   createExplorerAvatar,
   createGateVisitorEntity,
   createVillagerEntity,
+  describeCarriedLoad,
   getAuthorColorHex,
+  getCommitCargoMetrics,
   getRoleMeta,
   getVisitorStatusMeta,
+  refreshVillagerCargo,
 } from './villagerMesh';
 import { type BuiltWorld, buildArchipelagoWorld } from './worldBuilder';
 
@@ -766,8 +769,8 @@ async function populateCommitInspector(commit: CommitData): Promise<void> {
   insBranchBadge.textContent = commit.branch;
   insSubject.textContent = commit.subject;
 
-  const authorCount = villagers.filter((v) => v.commit.authorLogin === commit.authorLogin).length;
-  insQuirk.textContent = `${role.title} · ${authorCount} commit${authorCount === 1 ? '' : 's'} by @${commit.authorLogin}`;
+  const cargoMeta = getCommitCargoMetrics(commit);
+  insQuirk.textContent = `${role.title} · ${describeCarriedLoad(cargoMeta.filesCount, cargoMeta.totalLines)}`;
 
   insAvatar.replaceChildren();
   const bgHex = `#${getAuthorColorHex(commit.authorLogin).toString(16).padStart(6, '0')}`;
@@ -872,7 +875,13 @@ async function populateCommitInspector(commit: CommitData): Promise<void> {
       } else if (!activeGraph.isDemo) {
         await hydrateCommitDetail(activeGraph.owner, activeGraph.repo, commit, tokenInput.value);
       }
+      const ent = villagerBySha.get(commit.sha);
+      if (ent) {
+        refreshVillagerCargo(ent);
+      }
       if (selectedVillager?.commit.sha === commit.sha) {
+        const updatedCargo = getCommitCargoMetrics(commit);
+        insQuirk.textContent = `${role.title} · ${describeCarriedLoad(updatedCargo.filesCount, updatedCargo.totalLines)}`;
         renderCommitFiles(commit);
       }
     } catch {
@@ -1453,6 +1462,17 @@ async function loadRepoBySpec(spec: string, updateUrl = true): Promise<void> {
     showToast(
       `${graph.owner}/${graph.repo} — ${villagers.length} commits across ${graph.branches.length} islands`,
     );
+
+    // Quietly hydrate exact file/diff cargo counts for top recent commits in background
+    const recentToHydrate = villagers.slice(-8);
+    Promise.allSettled(
+      recentToHydrate.map(async (v) => {
+        await hydrateCommitDetail(graph.owner, graph.repo, v.commit, tokenInput.value);
+        if (activeGraph === graph) {
+          refreshVillagerCargo(v);
+        }
+      }),
+    );
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') return;
     const message = err instanceof Error ? err.message : 'Could not load repository.';
@@ -1687,7 +1707,8 @@ canvas.addEventListener('pointermove', (e) => {
     }
     if (ent) {
       canvas.style.cursor = 'pointer';
-      hoverPill.textContent = `${ent.commit.shortSha} · ${ent.commit.subject}`;
+      const cm = getCommitCargoMetrics(ent.commit);
+      hoverPill.textContent = `${ent.commit.shortSha} · ${cm.filesCount} file${cm.filesCount === 1 ? '' : 's'} · ${ent.commit.subject}`;
       hoverPill.style.left = `${e.clientX}px`;
       hoverPill.style.top = `${e.clientY}px`;
       hoverPill.hidden = false;
@@ -1809,7 +1830,7 @@ function updateGateAndVisitors(dt: number, elapsed: number): void {
 
     gv.hopTimer -= dt;
     if (gv.hopTimer <= 0 && gv.jumpY === 0) {
-      gv.jumpVelocity = 4.6 + (gv.file.staged ? 1.4 : 0.4);
+      gv.jumpVelocity = (4.8 + (gv.file.staged ? 1.2 : 0.3)) * (1 - gv.burden * 0.25);
       gv.hopTimer = 1.1 + ((gv.index % 5) * 0.45) + Math.random() * 1.2;
       if (gv.emoteTimer <= 0 && Math.random() < 0.36) {
         const emotes = getVisitorStatusMeta(gv.file.status).emotes;
@@ -1826,6 +1847,11 @@ function updateGateAndVisitors(dt: number, elapsed: number): void {
       }
     }
     gv.bodyGroup.position.y = gv.jumpY;
+    // Forward lean & cargo sway proportional to file line burden
+    gv.bodyGroup.rotation.x = gv.burden * 0.16;
+    gv.headGroup.rotation.x = -gv.burden * 0.1;
+    gv.cargoGroup.rotation.z = Math.sin(elapsed * 4.5 + gv.phaseOffset) * (0.02 + gv.burden * 0.08);
+    gv.cargoGroup.position.y = 0.36 + Math.min(0.08, gv.jumpY * 0.1);
 
     if (gv.emoteTimer > 0) {
       gv.emoteTimer -= dt;
@@ -2012,7 +2038,7 @@ function updateVillagers(dt: number, elapsed: number): void {
       }
     } else if (v.behavior === 'jump_joy') {
       if (v.jumpY === 0) {
-        v.jumpVelocity = 5.4 + (v.commit.kind === 'feat' ? 1.4 : 0);
+        v.jumpVelocity = (5.6 + (v.commit.kind === 'feat' ? 1.2 : 0)) * (1 - v.burden * 0.34);
       }
       v.leftLeg.rotation.x = v.jumpY > 0.1 ? -0.35 : 0;
       v.rightLeg.rotation.x = v.jumpY > 0.1 ? 0.35 : 0;
@@ -2024,7 +2050,6 @@ function updateVillagers(dt: number, elapsed: number): void {
       v.leftArm.rotation.x = -0.3 - swing * 0.2;
       v.leftLeg.rotation.x = 0;
       v.rightLeg.rotation.x = 0;
-      v.headGroup.rotation.x = Math.sin(elapsed * 5.5) * 0.14;
     } else if (v.behavior === 'spin') {
       v.bodyGroup.rotation.y += dt * 9.5;
       v.leftArm.rotation.x = -2.5;
@@ -2034,6 +2059,18 @@ function updateVillagers(dt: number, elapsed: number): void {
     if (v.jumpY > 0) {
       v.bodyGroup.position.y = v.jumpY;
     }
+
+    // Physical weight posture lean & stacked cargo tower sway proportional to commit burden!
+    const swayCycle = elapsed * (7.8 - v.burden * 2.2) + v.phaseOffset;
+    const carrierLean = isHovered ? v.burden * 0.08 : v.burden * 0.24;
+    v.bodyGroup.rotation.x = carrierLean;
+    v.headGroup.rotation.x =
+      v.behavior === 'tinker'
+        ? Math.sin(elapsed * 5.5) * 0.14 - carrierLean * 0.5
+        : -carrierLean * 0.55;
+    v.cargoGroup.rotation.z = Math.sin(swayCycle) * (0.03 + v.burden * 0.13);
+    v.cargoGroup.rotation.x = Math.abs(Math.cos(swayCycle)) * (v.burden * 0.055);
+    v.cargoGroup.position.y = 0.36 + Math.min(0.1, v.jumpY * 0.12);
 
     if (v.emoteTimer <= 0 && (i + Math.floor(elapsed * 60)) % 45 === 0) {
       const other = villagers[(i + 1) % count];

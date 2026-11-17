@@ -95,6 +95,9 @@ interface LocalRepoApiResponse {
       timestamp: string;
       subject: string;
       body: string;
+      filesCount?: number;
+      stats?: { additions: number; deletions: number; total: number };
+      files?: CommitFileChange[];
     }>;
   }>;
   gateVisitors: GateVisitorFile[];
@@ -152,6 +155,9 @@ export async function loadLocalRepoVillage(
         parents: item.parents,
         children: [],
         kind: classifyCommitKind(item.subject, item.parents.length),
+        filesCount: item.filesCount ?? item.files?.length,
+        stats: item.stats,
+        files: item.files,
       };
       commitsBySha.set(c.sha, c);
       uniqueCommits.push(c);

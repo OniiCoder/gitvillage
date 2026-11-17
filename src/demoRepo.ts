@@ -344,7 +344,10 @@ export function createDemoRepoGraph(): RepoVillageGraph {
       body: 'Paste any owner/repo in the top bar (or pick a preset) to watch its branches and commits materialize as living sky islands.',
       files: [
         { filename: 'src/githubLoader.ts', status: 'added', additions: 265, deletions: 0 },
+        { filename: 'src/localLoader.ts', status: 'added', additions: 194, deletions: 0 },
         { filename: 'src/main.ts', status: 'modified', additions: 72, deletions: 15 },
+        { filename: 'src/style.css', status: 'modified', additions: 118, deletions: 24 },
+        { filename: 'index.html', status: 'modified', additions: 64, deletions: 12 },
       ],
     },
   ];
@@ -366,6 +369,7 @@ export function createDemoRepoGraph(): RepoVillageGraph {
       parents: [...s.parents],
       children: [],
       kind: classifyCommitKind(s.subject, s.parents.length),
+      filesCount: s.files.length,
       stats: {
         additions,
         deletions,

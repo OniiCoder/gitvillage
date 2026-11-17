@@ -80,7 +80,212 @@ export function getRoleMeta(kind: CommitKind): {
   }
 }
 
-// Shared geometries for fast instancing/cloning
+const strapMat = new THREE.MeshStandardMaterial({ color: 0x5c2d16, roughness: 0.85 });
+const frameWoodMat = new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.88 });
+const crateOakMat = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.78, flatShading: true });
+const cratePineMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.8, flatShading: true });
+const parchmentPackMat = new THREE.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.72, flatShading: true });
+const canvasSackMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.85, flatShading: true });
+const bandAddMat = new THREE.MeshStandardMaterial({ color: 0x30d158, roughness: 0.5 });
+const bandDelMat = new THREE.MeshStandardMaterial({ color: 0xff453a, roughness: 0.5 });
+const bandModMat = new THREE.MeshStandardMaterial({ color: 0x0a84ff, roughness: 0.5 });
+
+export interface CargoMetrics {
+  filesCount: number;
+  additions: number;
+  deletions: number;
+  totalLines: number;
+  burden: number; // 0.08 (featherlight) -> 1.0 (colossal)
+  isProvisional: boolean;
+}
+
+export function getCommitCargoMetrics(commit: CommitData): CargoMetrics {
+  const hasRealStats = Boolean(commit.stats || commit.files || commit.filesCount !== undefined);
+  if (hasRealStats) {
+    const filesCount = Math.max(1, commit.filesCount ?? commit.files?.length ?? 1);
+    const additions = commit.stats?.additions ?? 0;
+    const deletions = commit.stats?.deletions ?? 0;
+    const totalLines = Math.max(1, additions + deletions);
+    const fileFactor = Math.min(1, (filesCount - 1) / 7);
+    const lineFactor = Math.min(1, Math.log10(totalLines + 1) / 3.3);
+    const burden = Math.min(1, Math.max(0.08, fileFactor * 0.55 + lineFactor * 0.45));
+    return { filesCount, additions, deletions, totalLines, burden, isProvisional: false };
+  }
+
+  // Provisional deterministic estimate before remote GitHub commit diff hydrates
+  const seed = hashString(commit.sha);
+  const filesCount =
+    commit.kind === 'merge'
+      ? 4 + (seed % 4)
+      : commit.kind === 'feat'
+        ? 2 + (seed % 4)
+        : 1 + (seed % 2);
+  const additions =
+    commit.kind === 'merge'
+      ? 140 + (seed % 220)
+      : commit.kind === 'feat'
+        ? 60 + (seed % 140)
+        : 12 + (seed % 45);
+  const deletions = Math.round(additions * 0.25);
+  const totalLines = additions + deletions;
+  const fileFactor = Math.min(1, (filesCount - 1) / 7);
+  const lineFactor = Math.min(1, Math.log10(totalLines + 1) / 3.3);
+  const burden = Math.min(1, Math.max(0.1, fileFactor * 0.55 + lineFactor * 0.45));
+  return { filesCount, additions, deletions, totalLines, burden, isProvisional: true };
+}
+
+export function describeCarriedLoad(filesCount: number, totalLines: number): string {
+  const fLabel = `${filesCount} file${filesCount === 1 ? '' : 's'}`;
+  const lLabel = `${totalLines.toLocaleString()} line${totalLines === 1 ? '' : 's'}`;
+  if (filesCount >= 6 || totalLines >= 800) {
+    return `Colossal Expedition Rig · ${fLabel} · ${lLabel}`;
+  }
+  if (filesCount >= 4 || totalLines >= 220) {
+    return `Heavy Courier Stack · ${fLabel} · ${lLabel}`;
+  }
+  if (filesCount >= 2 || totalLines >= 45) {
+    return `Sturdy Field Pack · ${fLabel} · ${lLabel}`;
+  }
+  return `Light Parcel · ${fLabel} · ${lLabel}`;
+}
+
+function populateCargoRig(
+  cargoGroup: THREE.Group,
+  metrics: CargoMetrics,
+  seed: number,
+  commitFiles?: CommitData['files'],
+): void {
+  cargoGroup.clear();
+
+  const { filesCount, additions, deletions, totalLines } = metrics;
+  const bulk = Math.min(1.58, Math.max(0.72, 0.66 + Math.log10(totalLines + 3) * 0.28));
+  const tierCount = Math.min(8, Math.max(1, filesCount));
+
+  // 1. Twin shoulder harness straps (in cargoGroup local space; cargoGroup sits at y=0.36, z=-0.22)
+  for (const sgn of [-1, 1]) {
+    const frontStrap = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.34, 0.26), strapMat);
+    frontStrap.position.set(sgn * 0.13, 0.18, 0.14);
+    cargoGroup.add(frontStrap);
+  }
+
+  // 2. L-shaped wooden porter pack-frame
+  const baseW = 0.34 * bulk;
+  const baseD = 0.24 * bulk;
+  const shelf = new THREE.Mesh(new THREE.BoxGeometry(baseW + 0.08, 0.045, baseD + 0.08), frameWoodMat);
+  shelf.position.set(0, 0, -baseD * 0.45);
+  shelf.castShadow = true;
+  cargoGroup.add(shelf);
+
+  // 3. Stacked Cargo Tiers — 1 tier per changed file (up to 8 high!)
+  let cursorY = 0.025;
+  for (let t = 0; t < tierCount; t++) {
+    const fileInfo = commitFiles?.[t];
+    const fileLines = fileInfo
+      ? fileInfo.additions + fileInfo.deletions
+      : Math.max(4, Math.round(totalLines / tierCount));
+
+    const tierBulk = Math.min(
+      1.55,
+      Math.max(0.68, 0.62 + Math.log10(fileLines + 3) * 0.27) * (1 - t * 0.035),
+    );
+    const w = 0.34 * tierBulk;
+    const h = (fileLines < 15 ? 0.11 : fileLines < 90 ? 0.17 : 0.22) * Math.min(1.25, bulk * 0.92);
+    const d = 0.23 * tierBulk;
+
+    const parcelGroup = new THREE.Group();
+    const shapeStyle = (seed + t * 7) % 3;
+    const mat =
+      shapeStyle === 0 ? crateOakMat : shapeStyle === 1 ? parchmentPackMat : cratePineMat;
+
+    const box = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    box.castShadow = true;
+    box.receiveShadow = true;
+    parcelGroup.add(box);
+
+    // Status accent shipping band (+additions green, -deletions red, balanced blue)
+    const isAddHeavy = fileInfo
+      ? fileInfo.status === 'added' || fileInfo.additions > fileInfo.deletions * 2
+      : additions >= deletions;
+    const isDelHeavy = fileInfo
+      ? fileInfo.status === 'removed' || fileInfo.deletions > fileInfo.additions
+      : deletions > additions;
+    const bandMat = isDelHeavy ? bandDelMat : isAddHeavy ? bandAddMat : bandModMat;
+
+    const band = new THREE.Mesh(new THREE.BoxGeometry(w * 0.22, h + 0.012, d + 0.014), bandMat);
+    parcelGroup.add(band);
+
+    const zCenter = -baseD * 0.46;
+    const jitterX = (((seed >> (t % 8)) & 3) - 1.5) * 0.018;
+    const yawTwist = (((seed + t * 13) % 9) - 4) * 0.035;
+    parcelGroup.position.set(jitterX, cursorY + h * 0.5, zCenter);
+    parcelGroup.rotation.y = yawTwist;
+
+    cargoGroup.add(parcelGroup);
+    cursorY += h + 0.012;
+  }
+
+  // 4. Vertical frame rails & cinch straps securing multi-file stacks
+  const frameHeight = Math.max(0.32, cursorY);
+  for (const sgn of [-1, 1]) {
+    const rail = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.022, 0.022, frameHeight, 6),
+      frameWoodMat,
+    );
+    rail.position.set(sgn * (baseW * 0.42), frameHeight * 0.5, -0.02);
+    cargoGroup.add(rail);
+  }
+
+  if (tierCount >= 3 || totalLines >= 140) {
+    const cinch = new THREE.Mesh(
+      new THREE.BoxGeometry(0.04, frameHeight + 0.03, baseD * 0.96),
+      strapMat,
+    );
+    cinch.position.set(0, frameHeight * 0.5, -baseD * 0.46);
+    cargoGroup.add(cinch);
+  }
+
+  // 5. Overflow side saddle-rolls & summit pennant for heavy / multi-file commits!
+  if (filesCount >= 5 || totalLines >= 350) {
+    for (const sgn of [-1, 1]) {
+      const sideRoll = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.085, 0.085, 0.34, 8),
+        canvasSackMat,
+      );
+      sideRoll.position.set(sgn * (baseW * 0.58 + 0.07), 0.24, -baseD * 0.45);
+      sideRoll.castShadow = true;
+      cargoGroup.add(sideRoll);
+    }
+  }
+
+  if (filesCount >= 6 || totalLines >= 650) {
+    const mast = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.014, 0.014, 0.32, 5),
+      frameWoodMat,
+    );
+    mast.position.set(0.08, cursorY + 0.15, -baseD * 0.46);
+    const pennant = new THREE.Mesh(
+      new THREE.ConeGeometry(0.085, 0.22, 4),
+      new THREE.MeshStandardMaterial({
+        color: 0xff9f0a,
+        emissive: 0xd97706,
+        emissiveIntensity: 0.35,
+        flatShading: true,
+      }),
+    );
+    pennant.rotation.z = -Math.PI / 2;
+    pennant.position.set(0.11, 0.1, 0);
+    mast.add(pennant);
+    cargoGroup.add(mast);
+  }
+}
+
+export function refreshVillagerCargo(entity: VillagerEntity): void {
+  const seed = hashString(entity.commit.sha);
+  const metrics = getCommitCargoMetrics(entity.commit);
+  populateCargoRig(entity.cargoGroup, metrics, seed, entity.commit.files);
+  entity.burden = metrics.burden;
+  entity.speed = (0.028 + ((seed % 16) / 1000)) * (1 - metrics.burden * 0.42);
+}
 const headGeo = new THREE.BoxGeometry(0.46, 0.44, 0.44);
 const torsoGeo = new THREE.CylinderGeometry(0.2, 0.26, 0.48, 8);
 const limbGeo = new THREE.CapsuleGeometry(0.068, 0.2, 4, 6);
@@ -305,15 +510,13 @@ export function createVillagerEntity(
   torso.castShadow = true;
   bodyGroup.add(torso);
 
-  // Backpack sized slightly by diff impact
-  const diffTotal = commit.stats?.total ?? 40;
-  const packScale = Math.min(1.4, 0.75 + Math.log10(diffTotal + 10) * 0.25);
-  const pack = new THREE.Mesh(
-    new THREE.BoxGeometry(0.28 * packScale, 0.3 * packScale, 0.16 * packScale),
-    new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.85 }),
-  );
-  pack.position.set(0, 0.49, -0.22);
-  bodyGroup.add(pack);
+  // Carried Cargo Rig (stacked parcels = changed files, bulk = line changes!)
+  const cargoMetrics = getCommitCargoMetrics(commit);
+  const burden = cargoMetrics.burden;
+  const cargoGroup = new THREE.Group();
+  cargoGroup.position.set(0, 0.36, -0.22);
+  populateCargoRig(cargoGroup, cargoMetrics, seed, commit.files);
+  bodyGroup.add(cargoGroup);
 
   // Arms
   const skinMat = new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.7 });
@@ -379,7 +582,6 @@ export function createVillagerEntity(
   filterBeam.visible = false;
   root.add(filterBeam);
 
-  // Raycast hitbox
   const hitBox = new THREE.Mesh(hitBoxGeo, hitBoxMat);
   hitBox.userData.commitSha = commit.sha;
   root.add(hitBox);
@@ -388,7 +590,7 @@ export function createVillagerEntity(
   const homePos = island.pathCurve.getPointAt(Math.min(1, Math.max(0, pathT)));
   root.position.copy(homePos);
 
-  return {
+  const entity: VillagerEntity = {
     commit,
     island,
     root,
@@ -398,13 +600,15 @@ export function createVillagerEntity(
     rightArm,
     leftLeg,
     rightLeg,
+    cargoGroup,
+    burden,
     auraRing,
     filterBeam,
     hitBox,
     homePos: homePos.clone(),
     pathT,
     pathDir: seed % 2 === 0 ? 1 : -1,
-    speed: 0.025 + ((seed % 20) / 1000),
+    speed: (0.028 + ((seed % 16) / 1000)) * (1 - burden * 0.42),
     behavior: seed % 3 === 0 ? 'jump_joy' : 'stroll',
     behaviorTimer: 1.5 + ((seed % 40) / 10),
     jumpPhase: (seed % 100) / 15,
@@ -414,6 +618,8 @@ export function createVillagerEntity(
     emoteEmoji: '',
     emoteTimer: 0,
   };
+
+  return entity;
 }
 
 export function createExplorerAvatar(): {
@@ -561,25 +767,21 @@ export function createGateVisitorEntity(
   torso.castShadow = true;
   bodyGroup.add(torso);
 
-  // Rolling Suitcase / Trunk beside the visitor, sized by line changes!
-  const lineTotal = file.additions + file.deletions;
-  const bagScale = Math.min(1.45, 0.78 + Math.log10(lineTotal + 8) * 0.28);
-  const suitcase = new THREE.Group();
-  const caseBox = new THREE.Mesh(
-    new THREE.BoxGeometry(0.24 * bagScale, 0.34 * bagScale, 0.18 * bagScale),
-    new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.78 }),
-  );
-  caseBox.position.y = 0.17 * bagScale;
-  caseBox.castShadow = true;
-  const handleBar = new THREE.Mesh(
-    new THREE.BoxGeometry(0.12, 0.16, 0.03),
-    new THREE.MeshStandardMaterial({ color: 0xcbd5e1 }),
-  );
-  handleBar.position.y = 0.38 * bagScale;
-  suitcase.add(caseBox, handleBar);
-  suitcase.position.set(-0.36, 0, -0.08);
-  suitcase.rotation.y = 0.25;
-  bodyGroup.add(suitcase);
+  // Carried Cargo Rig on back for this uncommitted file, scaled by its line changes!
+  const lineTotal = Math.max(1, file.additions + file.deletions);
+  const visitorBurden = Math.min(1, Math.max(0.12, Math.log10(lineTotal + 2) / 3.0));
+  const visitorMetrics: CargoMetrics = {
+    filesCount: lineTotal > 180 ? 3 : lineTotal > 45 ? 2 : 1,
+    additions: file.additions,
+    deletions: file.deletions,
+    totalLines: lineTotal,
+    burden: visitorBurden,
+    isProvisional: false,
+  };
+  const cargoGroup = new THREE.Group();
+  cargoGroup.position.set(0, 0.36, -0.22);
+  populateCargoRig(cargoGroup, visitorMetrics, seed);
+  bodyGroup.add(cargoGroup);
 
   // Arms
   const skinMat = new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.7 });
@@ -699,6 +901,8 @@ export function createGateVisitorEntity(
     rightArm,
     leftLeg,
     rightLeg,
+    cargoGroup,
+    burden: visitorBurden,
     ticketMesh,
     auraRing,
     hitBox,
