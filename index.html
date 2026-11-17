@@ -309,7 +309,7 @@
           id="repo-input"
           name="repo"
           type="text"
-          placeholder="GitHub owner/repo or local path…"
+          placeholder="GitHub owner/repo or URL…"
           spellcheck="false"
         />
         <button type="submit" id="load-btn" class="search-submit-btn" aria-label="Open repository" title="Open repository">
@@ -335,6 +335,7 @@
             id="local-quick-btn"
             class="tb-btn"
             title="Choose a local Git repository"
+            hidden
           >
             <svg class="sf-icon" width="15" height="15" aria-hidden="true"><use href="#sf-folder" /></svg>
             <span>Local…</span>
@@ -424,7 +425,7 @@
 
     <!-- Presets & Token Popover Sheet -->
     <div id="presets-popover" class="apple-sheet hud-popover" popover aria-label="Repositories">
-      <div id="presets-local-section" class="sheet-section">
+      <div id="presets-local-section" class="sheet-section" hidden>
         <div class="section-heading-row">
           <h3>Local Repositories</h3>
           <span class="section-caption">Uncommitted files queue at the Village Gate</span>

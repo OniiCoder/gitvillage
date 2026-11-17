@@ -650,6 +650,22 @@ function localGitVillagePlugin(): Plugin {
         }
       });
     },
+    transformIndexHtml(html, ctx) {
+      if (!ctx.server) return html;
+      return html
+        .replace(
+          'placeholder="GitHub owner/repo or URL…"',
+          'placeholder="GitHub owner/repo or local path…"',
+        )
+        .replace(
+          /(id="local-quick-btn"[\s\S]*?title="Choose a local Git repository")\s+hidden/,
+          '$1',
+        )
+        .replace(
+          'id="presets-local-section" class="sheet-section" hidden',
+          'id="presets-local-section" class="sheet-section"',
+        );
+    },
   };
 }
 

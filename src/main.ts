@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { createDemoRepoGraph } from './demoRepo';
@@ -5,7 +6,6 @@ import { hydrateCommitDetail, loadGitHubRepoVillage, parseRepoInput } from './gi
 import {
   type DiscoveredLocalRepo,
   browseLocalDirectory,
-  checkLocalServerAvailable,
   discoverLocalRepos,
   hydrateLocalCommitDetail,
   isLocalPathInput,
@@ -182,8 +182,9 @@ const insDiffPreview = document.getElementById('ins-diff-preview') as HTMLPreEle
 // 3. Single-tab-stop roving tabindex fallback for role="toolbar" when native focusgroup is absent
 if (!('focusGroup' in HTMLElement.prototype)) {
   const toolbarItems = Array.from(mainToolbar.querySelectorAll<HTMLButtonElement>('button'));
-  toolbarItems.forEach((b, i) => {
-    b.tabIndex = i === 0 ? 0 : -1;
+  const firstVisible = toolbarItems.find((b) => !b.hidden);
+  toolbarItems.forEach((b) => {
+    b.tabIndex = b === firstVisible ? 0 : -1;
   });
   mainToolbar.addEventListener('focusin', ({ target }) => {
     if (target instanceof HTMLButtonElement && toolbarItems.includes(target)) {
@@ -1393,7 +1394,7 @@ nativeFinderBtn.addEventListener('click', async () => {
 });
 
 presetsPopover.addEventListener('beforetoggle', (e) => {
-  if ((e as ToggleEvent).newState === 'open') {
+  if ((e as ToggleEvent).newState === 'open' && !presetsLocalSection.hidden) {
     refreshDiscoveredLocalRepos();
   }
 });
@@ -2335,27 +2336,18 @@ const initialParams = new URL(window.location.href).searchParams;
 const initialLocal = initialParams.get('local');
 const initialRepo = initialParams.get('repo');
 
+if (import.meta.env.DEV) {
+  localQuickBtn.hidden = false;
+  presetsLocalSection.hidden = false;
+  repoInput.placeholder = 'GitHub owner/repo or local path…';
+}
+
 rebuildVillageFromGraph(activeGraph);
 animate();
 
-checkLocalServerAvailable().then((localAvailable) => {
-  if (!localAvailable) {
-    localQuickBtn.hidden = true;
-    presetsLocalSection.hidden = true;
-    repoInput.placeholder = 'GitHub owner/repo or URL…';
-    if (!('focusGroup' in HTMLElement.prototype) && localQuickBtn.tabIndex === 0) {
-      localQuickBtn.tabIndex = -1;
-      const firstVisible = mainToolbar.querySelector<HTMLButtonElement>('button:not([hidden])');
-      if (firstVisible) firstVisible.tabIndex = 0;
-    }
-    return;
-  }
-  if (initialLocal) {
-    loadLocalRepo(initialLocal, false);
-  }
-});
-
-if (!initialLocal && initialRepo) {
+if (import.meta.env.DEV && initialLocal) {
+  loadLocalRepo(initialLocal, false);
+} else if (initialRepo) {
   repoInput.value = initialRepo;
   loadRepoBySpec(initialRepo, false);
 }
