@@ -104,6 +104,8 @@ export type VillagerBehavior =
 
 export interface VillagerEntity {
   commit: CommitData;
+  authorKey: string;
+  clanColor: number;
   island: IslandLayout;
   root: THREE.Group;
   bodyGroup: THREE.Group;

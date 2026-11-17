@@ -10,10 +10,165 @@ import type {
 } from './types';
 
 const SKIN_TONES = [0xffdbac, 0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0xffcba4];
-const AUTHOR_HUES = [
-  0x3b82f6, 0xef4444, 0x10b981, 0xf59e0b, 0x8b5cf6, 0xec4899, 0x06b6d4, 0x84cc16, 0xf97316,
-  0x6366f1,
+export const CLAN_PALETTE = [
+  0x0a84ff, // Cobalt Blue
+  0xff453a, // Coral Red
+  0x30d158, // Jade Emerald
+  0xbf5af2, // Royal Violet
+  0xff9f0a, // Sunset Amber
+  0x64d2ff, // Ice Cyan
+  0xff375f, // Berry Rose
+  0xffd60a, // Sunburst Gold
+  0x5e5ce6, // Deep Indigo
+  0xac8e68, // Warm Bronze
 ];
+
+const CLAN_EMBLEMS = ['●', '◆', '▲', '★', '⬢', '✦', '◉', '❖', '▼', '⬟'];
+export type ClanEarStyle = 'fox' | 'bear' | 'antler' | 'lynx' | 'wing' | 'antenna';
+const CLAN_EAR_STYLES: ClanEarStyle[] = ['fox', 'bear', 'antler', 'lynx', 'wing', 'antenna'];
+
+export interface ContributorClanProfile {
+  authorKey: string;
+  authorLogin: string;
+  authorName: string;
+  authorAvatar?: string;
+  commitCount: number;
+  clanIndex: number;
+  colorHex: number;
+  colorCss: string;
+  skinColor: number;
+  earStyle: ClanEarStyle;
+  earLabel: string;
+  emblem: string;
+  initials: string;
+  crestSpriteMat: THREE.SpriteMaterial;
+}
+
+export function normalizeAuthorKey(commit: Pick<CommitData, 'authorLogin' | 'authorName'>): string {
+  return (commit.authorLogin || commit.authorName || 'contributor').trim().toLowerCase();
+}
+
+function computeInitials(name: string, login: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+  }
+  const clean = (parts[0] || login || 'C').replace(/[^a-zA-Z0-9]/g, '');
+  return clean.slice(0, 2).toUpperCase() || 'C';
+}
+
+function getEarStyleLabel(style: ClanEarStyle): string {
+  switch (style) {
+    case 'fox':
+      return 'Fox-Eared Kin';
+    case 'bear':
+      return 'Bear-Crest Kin';
+    case 'antler':
+      return 'Stag-Horn Kin';
+    case 'lynx':
+      return 'Lynx-Tuft Kin';
+    case 'wing':
+      return 'Sky-Wing Kin';
+    case 'antenna':
+      return 'Automaton Kin';
+  }
+}
+
+function makeClanCrestSpriteMaterial(
+  emblem: string,
+  initials: string,
+  colorCss: string,
+): THREE.SpriteMaterial {
+  const canvas = document.createElement('canvas');
+  canvas.width = 160;
+  canvas.height = 76;
+  const ctx = canvas.getContext('2d')!;
+
+  // Crisp Apple Spatial Pill Badge in contributor's clan color
+  ctx.fillStyle = colorCss;
+  ctx.beginPath();
+  ctx.roundRect(6, 6, 148, 64, 32);
+  ctx.fill();
+
+  // White specular pill border
+  ctx.lineWidth = 5;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.92)';
+  ctx.stroke();
+
+  // Emblem + Initials
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '700 30px -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif';
+  ctx.fillText(`${emblem} ${initials}`, 80, 39);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.SpriteMaterial({
+    map: tex,
+    transparent: true,
+    depthTest: true,
+  });
+}
+
+export function buildContributorClanMap(
+  commits: Iterable<CommitData>,
+): Map<string, ContributorClanProfile> {
+  const buckets = new Map<
+    string,
+    { login: string; name: string; avatar?: string; count: number }
+  >();
+
+  for (const c of commits) {
+    const key = normalizeAuthorKey(c);
+    const existing = buckets.get(key);
+    if (existing) {
+      existing.count++;
+      if (!existing.avatar && c.authorAvatar) existing.avatar = c.authorAvatar;
+    } else {
+      buckets.set(key, {
+        login: c.authorLogin,
+        name: c.authorName,
+        avatar: c.authorAvatar,
+        count: 1,
+      });
+    }
+  }
+
+  // Rank contributors by commit count descending so each gets a guaranteed unique visual slot!
+  const sorted = [...buckets.entries()].toSorted(
+    (a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]),
+  );
+
+  const clanMap = new Map<string, ContributorClanProfile>();
+  sorted.forEach(([key, info], idx) => {
+    const colorHex = CLAN_PALETTE[idx % CLAN_PALETTE.length];
+    const colorCss = `#${colorHex.toString(16).padStart(6, '0')}`;
+    const skinColor = SKIN_TONES[idx % SKIN_TONES.length];
+    const earStyle = CLAN_EAR_STYLES[idx % CLAN_EAR_STYLES.length];
+    const emblem = CLAN_EMBLEMS[idx % CLAN_EMBLEMS.length];
+    const initials = computeInitials(info.name, info.login);
+
+    clanMap.set(key, {
+      authorKey: key,
+      authorLogin: info.login,
+      authorName: info.name,
+      authorAvatar: info.avatar,
+      commitCount: info.count,
+      clanIndex: idx,
+      colorHex,
+      colorCss,
+      skinColor,
+      earStyle,
+      earLabel: getEarStyleLabel(earStyle),
+      emblem,
+      initials,
+      crestSpriteMat: makeClanCrestSpriteMaterial(emblem, initials, colorCss),
+    });
+  });
+
+  return clanMap;
+}
 
 export function hashString(str: string): number {
   let h = 2166136261;
@@ -25,7 +180,7 @@ export function hashString(str: string): number {
 }
 
 export function getAuthorColorHex(login: string): number {
-  return AUTHOR_HUES[hashString(login) % AUTHOR_HUES.length];
+  return CLAN_PALETTE[hashString(login.toLowerCase()) % CLAN_PALETTE.length];
 }
 
 export function getRoleMeta(kind: CommitKind): {
@@ -302,22 +457,108 @@ const eyeMat = new THREE.MeshBasicMaterial({ color: 0x1e1b2e });
 const cheekMat = new THREE.MeshBasicMaterial({ color: 0xff8da1 });
 const hitBoxMat = new THREE.MeshBasicMaterial({ visible: false });
 
+function attachClanHeadTraits(
+  earStyle: ClanEarStyle,
+  clanColorHex: number,
+  headGroup: THREE.Group,
+  skinMat: THREE.MeshStandardMaterial,
+): void {
+  const clanAccentMat = new THREE.MeshStandardMaterial({
+    color: clanColorHex,
+    roughness: 0.45,
+    flatShading: true,
+  });
+
+  if (earStyle === 'fox') {
+    for (const sgn of [-1, 1]) {
+      const ear = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.28, 4), skinMat);
+      ear.position.set(sgn * 0.27, 0.14, 0);
+      ear.rotation.z = -sgn * 0.48;
+      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.065, 0.13, 4), clanAccentMat);
+      tip.position.y = 0.08;
+      ear.add(tip);
+      headGroup.add(ear);
+    }
+  } else if (earStyle === 'bear') {
+    for (const sgn of [-1, 1]) {
+      const ear = new THREE.Mesh(new THREE.SphereGeometry(0.115, 8, 8), skinMat);
+      ear.scale.set(0.85, 1, 0.55);
+      ear.position.set(sgn * 0.27, 0.16, 0);
+      const inner = new THREE.Mesh(new THREE.SphereGeometry(0.065, 6, 6), clanAccentMat);
+      inner.position.set(0, 0, 0.045);
+      ear.add(inner);
+      headGroup.add(ear);
+    }
+  } else if (earStyle === 'antler') {
+    const hornMat = new THREE.MeshStandardMaterial({ color: 0xfef3c7, roughness: 0.6 });
+    for (const sgn of [-1, 1]) {
+      const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.036, 0.28, 5), hornMat);
+      stem.position.set(sgn * 0.27, 0.16, -0.02);
+      stem.rotation.z = -sgn * 0.55;
+      const tine = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.024, 0.14, 5), clanAccentMat);
+      tine.position.set(sgn * 0.05, 0.06, 0);
+      tine.rotation.z = -sgn * 0.7;
+      stem.add(tine);
+      headGroup.add(stem);
+    }
+  } else if (earStyle === 'lynx') {
+    for (const sgn of [-1, 1]) {
+      const ear = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.22, 0.08), skinMat);
+      ear.position.set(sgn * 0.27, 0.13, 0);
+      ear.rotation.z = -sgn * 0.38;
+      const tuft = new THREE.Mesh(new THREE.ConeGeometry(0.038, 0.14, 4), clanAccentMat);
+      tuft.position.y = 0.15;
+      ear.add(tuft);
+      headGroup.add(ear);
+    }
+  } else if (earStyle === 'wing') {
+    for (const sgn of [-1, 1]) {
+      const wing = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.11, 0.05), clanAccentMat);
+      wing.position.set(sgn * 0.3, 0.1, -0.03);
+      wing.rotation.z = sgn * 0.32;
+      wing.rotation.y = -sgn * 0.28;
+      headGroup.add(wing);
+    }
+  } else {
+    const brassMat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.6, roughness: 0.3 });
+    for (const sgn of [-1, 1]) {
+      const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.22, 6), brassMat);
+      rod.position.set(sgn * 0.27, 0.12, 0);
+      rod.rotation.z = -sgn * 0.65;
+      const bulb = new THREE.Mesh(
+        new THREE.SphereGeometry(0.052, 8, 8),
+        new THREE.MeshStandardMaterial({
+          color: clanColorHex,
+          emissive: clanColorHex,
+          emissiveIntensity: 0.45,
+        }),
+      );
+      bulb.position.y = 0.12;
+      rod.add(bulb);
+      headGroup.add(rod);
+    }
+  }
+}
+
 function attachHatAndTool(
   kind: CommitKind,
+  clanColorHex: number,
   headGroup: THREE.Group,
   rightArm: THREE.Group,
   bodyGroup: THREE.Group,
 ): void {
+  const clanTrimMat = new THREE.MeshStandardMaterial({ color: clanColorHex, roughness: 0.45 });
+
   if (kind === 'feat') {
-    // Builder yellow hard-hat + glowing crystal hammer
     const hatMat = new THREE.MeshStandardMaterial({ color: 0xfbbf24, roughness: 0.4 });
     const dome = new THREE.Mesh(new THREE.SphereGeometry(0.28, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2), hatMat);
     dome.position.y = 0.18;
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.18, 0.56), clanTrimMat);
+    stripe.position.set(0, 0.29, 0.02);
     const brim = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.05, 0.58), hatMat);
     brim.position.set(0, 0.19, 0.04);
-    headGroup.add(dome, brim);
+    headGroup.add(dome, stripe, brim);
 
-    // Hammer
     const handle = new THREE.Mesh(
       new THREE.CylinderGeometry(0.025, 0.025, 0.42, 6),
       new THREE.MeshStandardMaterial({ color: 0x78350f }),
@@ -336,20 +577,15 @@ function attachHatAndTool(
     handle.add(gemHead);
     rightArm.add(handle);
   } else if (kind === 'fix') {
-    // Bug-catcher safari pith hat + net!
     const pithMat = new THREE.MeshStandardMaterial({ color: 0xfde68a, roughness: 0.7 });
     const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.38, 0.05, 12), pithMat);
     brim.position.y = 0.21;
     const top = new THREE.Mesh(new THREE.SphereGeometry(0.24, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2), pithMat);
     top.position.y = 0.21;
-    const band = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.25, 0.25, 0.06, 12),
-      new THREE.MeshStandardMaterial({ color: 0xef4444 }),
-    );
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.07, 12), clanTrimMat);
     band.position.y = 0.24;
     headGroup.add(brim, top, band);
 
-    // Bug net
     const pole = new THREE.Mesh(
       new THREE.CylinderGeometry(0.02, 0.02, 0.56, 6),
       new THREE.MeshStandardMaterial({ color: 0x92400e }),
@@ -375,7 +611,6 @@ function attachHatAndTool(
     pole.add(hoop, meshBag);
     rightArm.add(pole);
   } else if (kind === 'merge') {
-    // Golden crown + royal cape + star scepter
     const goldMat = new THREE.MeshStandardMaterial({
       color: 0xfacc15,
       metalness: 0.55,
@@ -385,15 +620,15 @@ function attachHatAndTool(
     });
     const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.21, 0.18, 6), goldMat);
     crown.position.y = 0.29;
-    headGroup.add(crown);
+    const crownBand = new THREE.Mesh(new THREE.CylinderGeometry(0.225, 0.215, 0.055, 10), clanTrimMat);
+    crownBand.position.y = 0.22;
+    headGroup.add(crown, crownBand);
 
-    const cape = new THREE.Mesh(
-      new THREE.BoxGeometry(0.46, 0.5, 0.06),
-      new THREE.MeshStandardMaterial({ color: 0x9333ea, roughness: 0.6 }),
-    );
-    cape.position.set(0, 0.44, -0.22);
-    cape.rotation.x = 0.18;
-    bodyGroup.add(cape);
+    for (const sgn of [-1, 1]) {
+      const pauldron = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 8), goldMat);
+      pauldron.position.set(sgn * 0.26, 0.68, 0);
+      bodyGroup.add(pauldron);
+    }
 
     const staff = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.62, 6), goldMat);
     staff.position.set(0, -0.15, 0.14);
@@ -401,21 +636,22 @@ function attachHatAndTool(
     const orb = new THREE.Mesh(
       new THREE.OctahedronGeometry(0.1),
       new THREE.MeshStandardMaterial({
-        color: 0xf472b6,
-        emissive: 0xec4899,
-        emissiveIntensity: 0.7,
+        color: clanColorHex,
+        emissive: clanColorHex,
+        emissiveIntensity: 0.65,
       }),
     );
     orb.position.y = 0.35;
     staff.add(orb);
     rightArm.add(staff);
   } else if (kind === 'docs') {
-    // Scholar mortarboard + open scroll book
     const capMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.6 });
     const board = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.04, 0.54), capMat);
     board.position.y = 0.25;
     board.rotation.y = Math.PI / 4;
-    headGroup.add(board);
+    const tassel = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.16, 0.08), clanTrimMat);
+    tassel.position.set(0.24, 0.19, 0.16);
+    headGroup.add(board, tassel);
 
     const book = new THREE.Mesh(
       new THREE.BoxGeometry(0.24, 0.06, 0.18),
@@ -424,13 +660,14 @@ function attachHatAndTool(
     book.position.set(0, -0.22, 0.12);
     rightArm.add(book);
   } else if (kind === 'refactor') {
-    // Gardener straw sun-hat + broom
     const strawMat = new THREE.MeshStandardMaterial({ color: 0xfcd34d, roughness: 0.85 });
     const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.46, 0.03, 14), strawMat);
     brim.position.y = 0.21;
     const dome = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.25, 0.14, 12), strawMat);
     dome.position.y = 0.27;
-    headGroup.add(brim, dome);
+    const ribbon = new THREE.Mesh(new THREE.CylinderGeometry(0.255, 0.255, 0.055, 12), clanTrimMat);
+    ribbon.position.y = 0.235;
+    headGroup.add(brim, dome, ribbon);
 
     const broom = new THREE.Mesh(
       new THREE.CylinderGeometry(0.02, 0.02, 0.54, 6),
@@ -438,19 +675,12 @@ function attachHatAndTool(
     );
     broom.position.set(0, -0.2, 0.12);
     broom.rotation.x = Math.PI / 4;
-    const bristles = new THREE.Mesh(
-      new THREE.ConeGeometry(0.11, 0.2, 8),
-      strawMat,
-    );
+    const bristles = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.2, 8), strawMat);
     bristles.position.y = -0.3;
     broom.add(bristles);
     rightArm.add(broom);
   } else {
-    // Tinkerer beret + warm lantern
-    const beret = new THREE.Mesh(
-      new THREE.SphereGeometry(0.26, 10, 8),
-      new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.7 }),
-    );
+    const beret = new THREE.Mesh(new THREE.SphereGeometry(0.26, 10, 8), clanTrimMat);
     beret.scale.set(1.05, 0.5, 1.05);
     beret.position.set(0.03, 0.23, 0);
     headGroup.add(beret);
@@ -473,20 +703,24 @@ export function createVillagerEntity(
   island: IslandLayout,
   indexOnIsland: number,
   totalOnIsland: number,
+  clan?: ContributorClanProfile,
 ): VillagerEntity {
   const seed = hashString(commit.sha);
-  const skinColor = SKIN_TONES[seed % SKIN_TONES.length];
-  const tunicColor = getAuthorColorHex(commit.authorLogin);
+  const authorKey = clan?.authorKey ?? normalizeAuthorKey(commit);
+  const tunicColor = clan?.colorHex ?? getAuthorColorHex(commit.authorLogin);
+  // Shared skin tone & ear silhouette across ALL commits by the same contributor!
+  const skinColor = clan?.skinColor ?? SKIN_TONES[hashString(authorKey) % SKIN_TONES.length];
+  const earStyle = clan?.earStyle ?? CLAN_EAR_STYLES[hashString(authorKey) % CLAN_EAR_STYLES.length];
 
   const root = new THREE.Group();
   const bodyGroup = new THREE.Group();
   root.add(bodyGroup);
 
-  const scaleBoost = commit.kind === 'merge' ? 1.18 : 0.94 + ((seed % 15) / 100);
+  const scaleBoost = commit.kind === 'merge' ? 1.16 : 0.96 + ((seed % 10) / 100);
   bodyGroup.scale.setScalar(scaleBoost);
 
   // Legs
-  const pantsMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.8 });
+  const pantsMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8 });
   const leftLeg = new THREE.Group();
   leftLeg.position.set(-0.11, 0.24, 0);
   const leftLegMesh = new THREE.Mesh(limbGeo, pantsMat);
@@ -503,12 +737,27 @@ export function createVillagerEntity(
 
   bodyGroup.add(leftLeg, rightLeg);
 
-  // Torso
-  const torsoMat = new THREE.MeshStandardMaterial({ color: tunicColor, roughness: 0.65 });
+  // Torso in Contributor Clan Color
+  const torsoMat = new THREE.MeshStandardMaterial({ color: tunicColor, roughness: 0.58 });
   const torso = new THREE.Mesh(torsoGeo, torsoMat);
   torso.position.y = 0.48;
   torso.castShadow = true;
   bodyGroup.add(torso);
+
+  // Signature Contributor Clan Scarf + Front Scarf Tail!
+  const scarfMat = new THREE.MeshStandardMaterial({
+    color: tunicColor,
+    emissive: tunicColor,
+    emissiveIntensity: 0.14,
+    roughness: 0.5,
+  });
+  const scarfRing = new THREE.Mesh(new THREE.TorusGeometry(0.215, 0.052, 6, 14), scarfMat);
+  scarfRing.rotation.x = Math.PI / 2;
+  scarfRing.position.y = 0.71;
+  const scarfTail = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.24, 0.04), scarfMat);
+  scarfTail.position.set(0.08, 0.57, 0.22);
+  scarfTail.rotation.z = -0.15;
+  bodyGroup.add(scarfRing, scarfTail);
 
   // Carried Cargo Rig (stacked parcels = changed files, bulk = line changes!)
   const cargoMetrics = getCommitCargoMetrics(commit);
@@ -517,6 +766,19 @@ export function createVillagerEntity(
   cargoGroup.position.set(0, 0.36, -0.22);
   populateCargoRig(cargoGroup, cargoMetrics, seed, commit.files);
   bodyGroup.add(cargoGroup);
+
+  // Contributor Clan Standard (Sashimono Mast + Camera-Facing Crest Badge!)
+  if (clan) {
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.5, roughness: 0.35 });
+    const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.016, 0.92, 6), poleMat);
+    mast.position.set(-0.26, 1.12, -0.14);
+    bodyGroup.add(mast);
+
+    const crestSprite = new THREE.Sprite(clan.crestSpriteMat);
+    crestSprite.scale.set(0.58, 0.275, 1);
+    crestSprite.position.set(-0.26, 1.66, -0.14);
+    bodyGroup.add(crestSprite);
+  }
 
   // Arms
   const skinMat = new THREE.MeshStandardMaterial({ color: skinColor, roughness: 0.7 });
@@ -536,12 +798,14 @@ export function createVillagerEntity(
 
   bodyGroup.add(leftArm, rightArm);
 
-  // Head
+  // Head + Shared Contributor Clan Ears/Horns/Winglets
   const headGroup = new THREE.Group();
   headGroup.position.set(0, 0.94, 0);
   const headMesh = new THREE.Mesh(headGeo, skinMat);
   headMesh.castShadow = true;
   headGroup.add(headMesh);
+
+  attachClanHeadTraits(earStyle, tunicColor, headGroup, skinMat);
 
   // Cute face on +Z
   const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
@@ -554,14 +818,14 @@ export function createVillagerEntity(
   rightCheek.position.set(0.15, -0.06, 0.222);
   headGroup.add(leftEye, rightEye, leftCheek, rightCheek);
 
-  attachHatAndTool(commit.kind, headGroup, rightArm, bodyGroup);
+  attachHatAndTool(commit.kind, tunicColor, headGroup, rightArm, bodyGroup);
   bodyGroup.add(headGroup);
 
-  // Selection/hover ring on ground
+  // Persistent Contributor Clan Ring on ground
   const auraMat = new THREE.MeshBasicMaterial({
-    color: new THREE.Color(island.branch.color),
+    color: new THREE.Color(tunicColor),
     transparent: true,
-    opacity: 0.0,
+    opacity: 0.28,
     side: THREE.DoubleSide,
     depthWrite: false,
   });
@@ -569,9 +833,9 @@ export function createVillagerEntity(
   auraRing.position.y = 0.04;
   root.add(auraRing);
 
-  // Filter highlight beam
+  // Filter highlight beam in Contributor Clan Color
   const beamMat = new THREE.MeshBasicMaterial({
-    color: new THREE.Color(island.branch.color),
+    color: new THREE.Color(tunicColor),
     transparent: true,
     opacity: 0.0,
     side: THREE.DoubleSide,
@@ -592,6 +856,8 @@ export function createVillagerEntity(
 
   const entity: VillagerEntity = {
     commit,
+    authorKey,
+    clanColor: tunicColor,
     island,
     root,
     bodyGroup,
