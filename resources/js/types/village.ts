@@ -4,9 +4,11 @@ export type CommitKind = 'feat' | 'fix' | 'merge' | 'docs' | 'refactor' | 'chore
 
 export interface CommitFileChange {
   filename: string;
+  previousFilename?: string;
   status: 'added' | 'modified' | 'removed' | 'renamed';
   additions: number;
   deletions: number;
+  patch?: string;
 }
 
 export type WorkingTreeStatus = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked';
@@ -41,6 +43,7 @@ export interface CommitData {
     total: number;
   };
   files?: CommitFileChange[];
+  patchesHydrated?: boolean;
 }
 
 export interface BranchIslandData {

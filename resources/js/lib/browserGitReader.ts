@@ -558,23 +558,46 @@ function countTextLines(bytes: Uint8Array): number {
   return Math.max(1, lines);
 }
 
+function isBinaryBlob(bytes: Uint8Array | null): boolean {
+  if (!bytes || bytes.byteLength === 0) return false;
+  const checkLen = Math.min(bytes.byteLength, 512);
+  for (let i = 0; i < checkLen; i++) {
+    if (bytes[i] === 0) return true;
+  }
+  return false;
+}
+
 function estimateBlobDiff(oldBytes: Uint8Array | null, newBytes: Uint8Array | null): {
   additions: number;
   deletions: number;
   preview?: string;
 } {
+  if (isBinaryBlob(oldBytes) || isBinaryBlob(newBytes)) {
+    return { additions: 0, deletions: 0, preview: 'Binary file changed' };
+  }
+
   if (!oldBytes && newBytes) {
-    const text = textDecoder.decode(newBytes.subarray(0, 4096));
-    const lines = text.split('\n');
-    const preview = lines
-      .slice(0, 14)
-      .map((l) => `+${l}`)
-      .join('\n');
+    const text = textDecoder.decode(newBytes.subarray(0, 12_288)).replace(/\n$/, '');
+    const lines = text.length > 0 ? text.split('\n') : [];
+    const sample = lines.slice(0, 48);
+    const preview =
+      sample.length > 0
+        ? `@@ -0,0 +1,${sample.length} @@\n${sample.map((l) => `+${l}`).join('\n')}`
+        : undefined;
     return { additions: countTextLines(newBytes), deletions: 0, preview };
   }
+
   if (oldBytes && !newBytes) {
-    return { additions: 0, deletions: countTextLines(oldBytes) };
+    const text = textDecoder.decode(oldBytes.subarray(0, 12_288)).replace(/\n$/, '');
+    const lines = text.length > 0 ? text.split('\n') : [];
+    const sample = lines.slice(0, 48);
+    const preview =
+      sample.length > 0
+        ? `@@ -1,${sample.length} +0,0 @@\n${sample.map((l) => `-${l}`).join('\n')}`
+        : undefined;
+    return { additions: 0, deletions: countTextLines(oldBytes), preview };
   }
+
   if (!oldBytes || !newBytes) return { additions: 0, deletions: 0 };
 
   if (oldBytes.byteLength > 96_000 || newBytes.byteLength > 96_000) {
@@ -583,39 +606,120 @@ function estimateBlobDiff(oldBytes: Uint8Array | null, newBytes: Uint8Array | nu
     return {
       additions: Math.max(1, newL - Math.min(oldL, newL) + 2),
       deletions: Math.max(1, oldL - Math.min(oldL, newL) + 1),
+      preview: 'Large file modified (diff omitted for performance)',
     };
   }
 
-  const oldLines = textDecoder.decode(oldBytes).split('\n');
-  const newLines = textDecoder.decode(newBytes).split('\n');
+  const oldLines = textDecoder.decode(oldBytes).replace(/\n$/, '').split('\n');
+  const newLines = textDecoder.decode(newBytes).replace(/\n$/, '').split('\n');
 
-  const oldFreq = new Map<string, number>();
-  for (const l of oldLines) {
-    oldFreq.set(l, (oldFreq.get(l) ?? 0) + 1);
+  let prefix = 0;
+  const maxPrefix = Math.min(oldLines.length, newLines.length);
+  while (prefix < maxPrefix && oldLines[prefix] === newLines[prefix]) {
+    prefix++;
   }
 
+  let suffix = 0;
+  while (
+    suffix < oldLines.length - prefix &&
+    suffix < newLines.length - prefix &&
+    oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]
+  ) {
+    suffix++;
+  }
+
+  const oldMid = oldLines.slice(prefix, oldLines.length - suffix);
+  const newMid = newLines.slice(prefix, newLines.length - suffix);
+
+  if (oldMid.length === 0 && newMid.length === 0) {
+    return { additions: 0, deletions: 0 };
+  }
+
+  const ctxBefore = oldLines.slice(Math.max(0, prefix - 2), prefix);
+  const ctxAfter = oldLines.slice(oldLines.length - suffix, Math.min(oldLines.length, oldLines.length - suffix + 2));
+  const hunkOldStart = Math.max(1, prefix - ctxBefore.length + 1);
+  const hunkNewStart = Math.max(1, prefix - ctxBefore.length + 1);
+
+  if (oldMid.length * newMid.length <= 64_000) {
+    const m = oldMid.length;
+    const n = newMid.length;
+    const dp = new Uint16Array((m + 1) * (n + 1));
+    const stride = n + 1;
+    for (let i = m - 1; i >= 0; i--) {
+      for (let j = n - 1; j >= 0; j--) {
+        dp[i * stride + j] =
+          oldMid[i] === newMid[j]
+            ? dp[(i + 1) * stride + (j + 1)] + 1
+            : Math.max(dp[(i + 1) * stride + j], dp[i * stride + (j + 1)]);
+      }
+    }
+
+    const bodyLines: string[] = [];
+    let additions = 0;
+    let deletions = 0;
+    let i = 0;
+    let j = 0;
+    while (i < m && j < n) {
+      if (oldMid[i] === newMid[j]) {
+        bodyLines.push(` ${oldMid[i]}`);
+        i++;
+        j++;
+      } else if (dp[(i + 1) * stride + j] >= dp[i * stride + (j + 1)]) {
+        bodyLines.push(`-${oldMid[i]}`);
+        deletions++;
+        i++;
+      } else {
+        bodyLines.push(`+${newMid[j]}`);
+        additions++;
+        j++;
+      }
+    }
+    while (i < m) {
+      bodyLines.push(`-${oldMid[i++]}`);
+      deletions++;
+    }
+    while (j < n) {
+      bodyLines.push(`+${newMid[j++]}`);
+      additions++;
+    }
+
+    const fullHunk = [
+      ...ctxBefore.map((l) => ` ${l}`),
+      ...bodyLines.slice(0, 72),
+      ...(bodyLines.length <= 72 ? ctxAfter.map((l) => ` ${l}`) : [' … diff truncated …']),
+    ];
+    const oldSpan = ctxBefore.length + oldMid.length + (bodyLines.length <= 72 ? ctxAfter.length : 0);
+    const newSpan = ctxBefore.length + newMid.length + (bodyLines.length <= 72 ? ctxAfter.length : 0);
+    const preview = `@@ -${hunkOldStart},${oldSpan} +${hunkNewStart},${newSpan} @@\n${fullHunk.join('\n')}`;
+    return { additions, deletions, preview };
+  }
+
+  const oldFreq = new Map<string, number>();
+  for (const l of oldMid) {
+    oldFreq.set(l, (oldFreq.get(l) ?? 0) + 1);
+  }
   let shared = 0;
-  const addedSample: string[] = [];
-  for (const l of newLines) {
+  for (const l of newMid) {
     const c = oldFreq.get(l) ?? 0;
     if (c > 0) {
       shared++;
       oldFreq.set(l, c - 1);
-    } else if (addedSample.length < 8 && l.trim()) {
-      addedSample.push(`+${l}`);
     }
   }
 
-  const removedSample: string[] = [];
-  for (const [l, rem] of oldFreq) {
-    if (rem > 0 && removedSample.length < 6 && l.trim()) {
-      removedSample.push(`-${l}`);
-    }
-  }
+  const additions = Math.max(0, newMid.length - shared);
+  const deletions = Math.max(0, oldMid.length - shared);
+  const delSample = oldMid.slice(0, 20).map((l) => `-${l}`);
+  const addSample = newMid.slice(0, 24).map((l) => `+${l}`);
+  const oldSpan = ctxBefore.length + delSample.length;
+  const newSpan = ctxBefore.length + addSample.length;
+  const preview = [
+    `@@ -${hunkOldStart},${oldSpan} +${hunkNewStart},${newSpan} @@`,
+    ...ctxBefore.map((l) => ` ${l}`),
+    ...delSample,
+    ...addSample,
+  ].join('\n');
 
-  const additions = Math.max(0, newLines.length - shared);
-  const deletions = Math.max(0, oldLines.length - shared);
-  const preview = [...removedSample, ...addedSample].join('\n') || undefined;
   return { additions, deletions, preview };
 }
 
@@ -1088,6 +1192,7 @@ export async function loadBrowserGitRepoVillage(
           status: ch.status,
           additions: est.additions,
           deletions: est.deletions,
+          patch: est.preview,
         });
       }
 
@@ -1114,6 +1219,7 @@ export async function loadBrowserGitRepoVillage(
           total: totalAdd + totalDel,
         },
         files: detailedFiles,
+        patchesHydrated: true,
       };
 
       commitsBySha.set(commitData.sha, commitData);
@@ -1152,6 +1258,7 @@ export async function loadBrowserGitRepoVillage(
       parents: [],
       children: [],
       kind: 'feat',
+      patchesHydrated: true,
     };
     commitsBySha.set(placeholderSha, placeholder);
     branches.splice(0, branches.length, {
@@ -1243,6 +1350,7 @@ export async function loadBrowserGitRepoVillage(
           staged: true,
           additions: 0,
           deletions: est.deletions,
+          diffPreview: est.preview,
         });
         recordedPaths.add(filePath);
       }
@@ -1305,6 +1413,7 @@ export async function loadBrowserGitRepoVillage(
         staged: false,
         additions: 0,
         deletions: est.deletions,
+        diffPreview: est.preview,
       });
       recordedPaths.add(trackedPath);
     }

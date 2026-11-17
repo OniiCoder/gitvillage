@@ -2,6 +2,7 @@ import { Head } from '@inertiajs/react';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { BottomFilterDock } from '@/Components/BottomFilterDock';
 import { CensusPopover } from '@/Components/CensusPopover';
+import { DiffViewerDialog, type DiffModalPayload } from '@/Components/DiffViewerDialog';
 import { FieldGuideDialog } from '@/Components/FieldGuideDialog';
 import { InspectorSheet } from '@/Components/InspectorSheet';
 import { extractDroppedRepoSource, LocalRepoDialog } from '@/Components/LocalRepoDialog';
@@ -47,6 +48,7 @@ export default function VillageIndex({
   const hoverPillRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<VillageEngine | null>(null);
   const localDialogRef = useRef<HTMLDialogElement | null>(null);
+  const diffDialogRef = useRef<HTMLDialogElement | null>(null);
   const githubTokenRef = useRef('');
   const toastTimerRef = useRef<number | undefined>(undefined);
 
@@ -54,6 +56,7 @@ export default function VillageIndex({
   const [repoInput, setRepoInput] = useState<string>(initialRepo ?? initialLocal ?? '');
   const [githubToken, setGithubToken] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
+  const [diffSelectedFilename, setDiffSelectedFilename] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; isError: boolean; visible: boolean }>({
     msg: '',
     isError: false,
@@ -189,6 +192,49 @@ export default function VillageIndex({
     }
   };
 
+  const openDiffModal = useCallback((filename?: string) => {
+    sound.playPop(587.33);
+    setDiffSelectedFilename(filename ?? null);
+    diffDialogRef.current?.showModal();
+  }, []);
+
+  const diffModalPayload: DiffModalPayload | null = (() => {
+    const sel = snapshot.selection;
+    if (!sel) return null;
+    if (sel.kind === 'commit') {
+      const c = sel.commit;
+      return {
+        title: c.subject,
+        subtitle: `${c.authorName} · ${c.shortSha}`,
+        badge: c.branch,
+        files: c.files ?? [],
+        isHydrating: sel.isHydratingDiff,
+      };
+    }
+    const v = sel.visitor;
+    return {
+      title: v.filename.split('/').pop() || v.filename,
+      subtitle: `${v.filename} · ${v.staged ? 'Staged at Gate' : 'Working-tree change'}`,
+      badge: snapshot.graph.defaultBranch,
+      files: [
+        {
+          filename: v.filename,
+          status:
+            v.status === 'added' || v.status === 'untracked'
+              ? 'added'
+              : v.status === 'deleted'
+                ? 'removed'
+                : v.status === 'renamed'
+                  ? 'renamed'
+                  : 'modified',
+          additions: v.additions,
+          deletions: v.deletions,
+          patch: v.diffPreview,
+        },
+      ],
+    };
+  })();
+
   const pageTitle = snapshot.graph.isDemo
     ? 'Sky Village'
     : snapshot.graph.isLocal
@@ -295,6 +341,14 @@ export default function VillageIndex({
         onCelebrate={() => engineRef.current?.celebrateSelected()}
         onLetVisitorsIn={() => engineRef.current?.triggerGatePreviewOpen()}
         onSyncLocal={() => void engineRef.current?.pollLocalRepoNow(true)}
+        onOpenDiffModal={openDiffModal}
+      />
+
+      <DiffViewerDialog
+        dialogRef={diffDialogRef}
+        payload={diffModalPayload}
+        selectedFilename={diffSelectedFilename}
+        onSelectFilename={setDiffSelectedFilename}
       />
 
       <LocalRepoDialog

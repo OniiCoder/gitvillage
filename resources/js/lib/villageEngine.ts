@@ -553,7 +553,10 @@ export class VillageEngine {
 
   private async hydrateSelectedCommitIfNeeded(v: VillagerEntity): Promise<void> {
     const commit = v.commit;
-    if (commit.stats && commit.files) return;
+    if (commit.patchesHydrated || this.activeGraph.isDemo) return;
+    if (this.activeGraph.isLocal && (!this.cb.localServerEnabled || !this.activeGraph.localPath)) {
+      return;
+    }
 
     this.isHydratingDiff = true;
     this.emit();

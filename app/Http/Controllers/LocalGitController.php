@@ -292,44 +292,121 @@ class LocalGitController extends Controller
         }
         $topLevel = trim($topRes['stdout']);
 
-        $statRes = $this->runGit($topLevel, ['show', '--numstat', '--format=', $sha]);
-        $nameRes = $this->runGit($topLevel, ['show', '--name-status', '--format=', $sha]);
+        $statRes = $this->runGit($topLevel, [
+            'show',
+            '-m',
+            '--first-parent',
+            '--numstat',
+            '-z',
+            '--find-renames',
+            '--no-ext-diff',
+            '--format=',
+            $sha,
+        ]);
+        $nameRes = $this->runGit($topLevel, [
+            'show',
+            '-m',
+            '--first-parent',
+            '--name-status',
+            '-z',
+            '--find-renames',
+            '--no-ext-diff',
+            '--format=',
+            $sha,
+        ]);
+        $patchRes = $this->runGit($topLevel, [
+            'show',
+            '-m',
+            '--first-parent',
+            '--patch',
+            '--unified=3',
+            '--no-color',
+            '--no-ext-diff',
+            '--find-renames',
+            '--format=',
+            $sha,
+        ]);
 
         $statusMap = [];
-        if ($nameRes['ok']) {
-            foreach (array_filter(explode("\n", trim($nameRes['stdout']))) as $line) {
-                $parts = explode("\t", $line);
-                $code = substr($parts[0] ?? 'M', 0, 1);
-                $file = end($parts) ?: '';
-                $statusMap[$file] = match ($code) {
-                    'A' => 'added',
-                    'D' => 'removed',
-                    'R' => 'renamed',
-                    default => 'modified',
-                };
+        if ($nameRes['ok'] && $nameRes['stdout'] !== '') {
+            $nTokens = explode("\0", $nameRes['stdout']);
+            $nCount = count($nTokens);
+            for ($i = 0; $i < $nCount; $i++) {
+                $codeToken = ltrim($nTokens[$i], "\r\n");
+                if ($codeToken === '') {
+                    continue;
+                }
+                $code = $codeToken[0];
+                if ($code === 'R' || $code === 'C') {
+                    $oldFile = $nTokens[++$i] ?? '';
+                    $newFile = $nTokens[++$i] ?? '';
+                    if ($newFile !== '') {
+                        $statusMap[$newFile] = [
+                            'status' => 'renamed',
+                            'previousFilename' => $oldFile !== '' ? $oldFile : null,
+                        ];
+                    }
+                } else {
+                    $file = $nTokens[++$i] ?? '';
+                    if ($file !== '') {
+                        $statusMap[$file] = [
+                            'status' => match ($code) {
+                                'A' => 'added',
+                                'D' => 'removed',
+                                default => 'modified',
+                            },
+                            'previousFilename' => null,
+                        ];
+                    }
+                }
             }
         }
+
+        $patchMap = $patchRes['ok'] ? $this->parseUnifiedPatchMap($patchRes['stdout']) : [];
 
         $files = [];
         $totalAdd = 0;
         $totalDel = 0;
-        if ($statRes['ok']) {
-            foreach (array_filter(explode("\n", trim($statRes['stdout']))) as $line) {
-                $parts = explode("\t", $line);
+        if ($statRes['ok'] && $statRes['stdout'] !== '') {
+            $sTokens = explode("\0", $statRes['stdout']);
+            $sCount = count($sTokens);
+            for ($i = 0; $i < $sCount; $i++) {
+                $token = ltrim($sTokens[$i], "\r\n");
+                if ($token === '') {
+                    continue;
+                }
+                $parts = explode("\t", $token, 3);
                 if (count($parts) < 3) {
                     continue;
                 }
                 $add = is_numeric($parts[0]) ? (int) $parts[0] : 0;
                 $del = is_numeric($parts[1]) ? (int) $parts[1] : 0;
-                $fname = implode("\t", array_slice($parts, 2));
+                $prevName = null;
+                if ($parts[2] === '') {
+                    $prevName = $sTokens[++$i] ?? null;
+                    $fname = $sTokens[++$i] ?? ($prevName ?? '');
+                } else {
+                    $fname = $parts[2];
+                }
+                if ($fname === '') {
+                    continue;
+                }
+
                 $totalAdd += $add;
                 $totalDel += $del;
-                $files[] = [
+                $meta = $statusMap[$fname] ?? null;
+                $entry = [
                     'filename' => $fname,
-                    'status' => $statusMap[$fname] ?? 'modified',
+                    'status' => $meta['status'] ?? ($prevName !== null ? 'renamed' : 'modified'),
                     'additions' => $add,
                     'deletions' => $del,
+                    'patch' => $patchMap[$fname] ?? ($prevName !== null ? ($patchMap[$prevName] ?? null) : null),
                 ];
+                $resolvedPrev = $meta['previousFilename'] ?? $prevName;
+                if ($resolvedPrev !== null && $resolvedPrev !== '') {
+                    $entry['previousFilename'] = $resolvedPrev;
+                }
+                $files[] = $entry;
             }
         }
 
@@ -339,7 +416,7 @@ class LocalGitController extends Controller
                 'deletions' => $totalDel,
                 'total' => $totalAdd + $totalDel,
             ],
-            'files' => array_slice($files, 0, 40),
+            'files' => array_slice($files, 0, 45),
         ]);
     }
 
@@ -478,17 +555,18 @@ class LocalGitController extends Controller
                     if (! str_contains(substr($raw, 0, 512), "\0")) {
                         $lines = explode("\n", rtrim($raw, "\n"));
                         $add = count($lines);
-                        $sample = array_slice($lines, 0, 12);
-                        $preview = "@@ -0,0 +1,{$add} @@\n".implode("\n", array_map(fn ($l) => '+'.$l, $sample));
+                        $sample = array_slice($lines, 0, 60);
+                        $shown = count($sample);
+                        $preview = "@@ -0,0 +1,{$shown} @@\n".implode("\n", array_map(fn ($l) => '+'.$l, $sample));
                     }
                 }
             } else {
                 $diffArgs = $staged
-                    ? ['diff', '--cached', '--unified=2', '--', $filepath]
-                    : ['diff', '--unified=2', '--', $filepath];
+                    ? ['diff', '--cached', '--unified=3', '--no-color', '--no-ext-diff', '--', $filepath]
+                    : ['diff', '--unified=3', '--no-color', '--no-ext-diff', '--', $filepath];
                 $diffRes = $this->runGit($topLevel, $diffArgs);
                 if ($diffRes['ok'] && trim($diffRes['stdout']) !== '') {
-                    $dLines = explode("\n", trim($diffRes['stdout']));
+                    $dLines = explode("\n", rtrim($diffRes['stdout'], "\r\n"));
                     $hunkIdx = 0;
                     foreach ($dLines as $idx => $dl) {
                         if (str_starts_with($dl, '@@')) {
@@ -496,7 +574,7 @@ class LocalGitController extends Controller
                             break;
                         }
                     }
-                    $preview = implode("\n", array_slice($dLines, $hunkIdx, 14));
+                    $preview = implode("\n", array_slice($dLines, $hunkIdx, 80));
                 }
             }
 
@@ -511,6 +589,105 @@ class LocalGitController extends Controller
         }
 
         return $visitors;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function parseUnifiedPatchMap(string $rawPatch): array
+    {
+        if (trim($rawPatch) === '') {
+            return [];
+        }
+
+        $chunks = explode("\ndiff --git ", "\n".$rawPatch);
+        array_shift($chunks);
+        $map = [];
+
+        foreach ($chunks as $chunk) {
+            $lines = explode("\n", $chunk);
+            $headerLine = $lines[0] ?? '';
+            $renameFrom = '';
+            $renameTo = '';
+            $minusPath = '';
+            $plusPath = '';
+            $isBinary = false;
+            $hunkStart = null;
+
+            $lineCount = count($lines);
+            for ($i = 1; $i < $lineCount; $i++) {
+                $line = $lines[$i];
+                if (str_starts_with($line, '@@ ')) {
+                    $hunkStart = $i;
+                    break;
+                }
+                if (str_starts_with($line, 'rename from ')) {
+                    $renameFrom = $this->unquoteGitPath(substr($line, 12));
+                } elseif (str_starts_with($line, 'rename to ')) {
+                    $renameTo = $this->unquoteGitPath(substr($line, 10));
+                } elseif (str_starts_with($line, '--- ')) {
+                    $rawMinus = $this->unquoteGitPath(substr($line, 4));
+                    $minusPath = str_starts_with($rawMinus, 'a/') ? substr($rawMinus, 2) : $rawMinus;
+                } elseif (str_starts_with($line, '+++ ')) {
+                    $rawPlus = $this->unquoteGitPath(substr($line, 4));
+                    $plusPath = str_starts_with($rawPlus, 'b/') ? substr($rawPlus, 2) : $rawPlus;
+                } elseif (str_starts_with($line, 'Binary files ')) {
+                    $isBinary = true;
+                }
+            }
+
+            $fileKey = $renameTo !== ''
+                ? $renameTo
+                : ($plusPath !== '' && $plusPath !== '/dev/null' ? $plusPath : $minusPath);
+
+            if (($fileKey === '' || $fileKey === '/dev/null') && preg_match('/ b\/(.+)$/', $headerLine, $m)) {
+                $fileKey = $this->unquoteGitPath($m[1]);
+            }
+
+            if ($fileKey === '' || $fileKey === '/dev/null') {
+                continue;
+            }
+
+            $patchText = '';
+            if ($hunkStart !== null) {
+                $patchText = rtrim(implode("\n", array_slice($lines, $hunkStart)), "\r\n");
+                $patchText = $this->truncatePatch($patchText, 12_000);
+            } elseif ($isBinary) {
+                $patchText = 'Binary file changed';
+            } elseif ($renameFrom !== '' && $renameTo !== '') {
+                $patchText = "Renamed from {$renameFrom} to {$renameTo} (0 line changes)";
+            }
+
+            if ($patchText !== '') {
+                $map[$fileKey] = $patchText;
+            }
+        }
+
+        return $map;
+    }
+
+    private function unquoteGitPath(string $raw): string
+    {
+        $trimmed = trim($raw);
+        if (strlen($trimmed) >= 2 && $trimmed[0] === '"' && str_ends_with($trimmed, '"')) {
+            return stripcslashes(substr($trimmed, 1, -1));
+        }
+
+        return $trimmed;
+    }
+
+    private function truncatePatch(string $patch, int $maxChars): string
+    {
+        if (strlen($patch) <= $maxChars) {
+            return $patch;
+        }
+        $slice = substr($patch, 0, $maxChars);
+        $lastNewline = strrpos($slice, "\n");
+        if ($lastNewline !== false && $lastNewline > 0) {
+            $slice = substr($slice, 0, $lastNewline);
+        }
+
+        return $slice."\n… diff truncated for large file …";
     }
 
     /**

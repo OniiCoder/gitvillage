@@ -25,6 +25,191 @@ interface SeedCommit {
 
 const BRANCH_PALETTE = ['#34d399', '#60a5fa', '#f472b6', '#fbbf24', '#a78bfa', '#fb923c'];
 
+const DEMO_FILE_PATCHES: Record<string, string> = {
+  'm1:src/world/bedrock.ts': `@@ -0,0 +1,14 @@
++import * as THREE from 'three';
++
++export function createFloatingBedrock(length: number, width: number): THREE.Group {
++  const group = new THREE.Group();
++  const turf = new THREE.Mesh(
++    new THREE.BoxGeometry(length, 1.2, width),
++    new THREE.MeshStandardMaterial({ color: 0x4ade80, roughness: 0.78 }),
++  );
++  const cliffCone = new THREE.Mesh(
++    new THREE.ConeGeometry(width * 0.62, 6.4, 7),
++    new THREE.MeshStandardMaterial({ color: 0x1e293b, flatShading: true }),
++  );
++  cliffCone.rotation.x = Math.PI;
++  group.add(turf, cliffCone);
++  return group;
++}`,
+  'm1:src/world/skybox.ts': `@@ -0,0 +1,10 @@
++export const SKY_PRESETS = {
++  day: { zenith: '#1d4ed8', horizon: '#38bdf8', mist: '#e0f2fe' },
++  sunset: { zenith: '#311042', horizon: '#db2777', mist: '#fdba74' },
++  night: { zenith: '#020617', horizon: '#0f172a', mist: '#1e1b4b' },
++} as const;
++
++export function createCloudDome(radius = 240) {
++  return { radius, puffClusters: 18, driftSpeed: 0.42 };
++}`,
+  'm1:package.json': `@@ -0,0 +1,11 @@
++{
++  "name": "@gitvillage/sky-village",
++  "version": "0.1.0",
++  "type": "module",
++  "scripts": {
++    "dev": "vite",
++    "build": "tsc --noEmit && vite build"
++  },
++  "dependencies": {
++    "three": "^0.175.0"
++  }
++}`,
+  'm3:src/entities/villager.ts': `@@ -41,9 +41,12 @@ export function stepVillagerPhysics(v: VillagerEntity, dt: number): void {
+   const surfaceY = sampleIslandElevation(v.island, v.pathT);
+-  if (v.nearbyHighFive) {
+-    v.jumpVelocity += 14.5;
+-  }
++  if (v.nearbyHighFive && v.jumpY <= 0.02) {
++    v.jumpVelocity = Math.min(8.4, v.jumpVelocity + 6.2);
++  }
++  v.jumpVelocity = Math.max(-18, Math.min(9.5, v.jumpVelocity - 22.0 * dt));
+   v.jumpY = Math.max(0, v.jumpY + v.jumpVelocity * dt);
+   v.root.position.y = surfaceY + v.jumpY;
+ }`,
+  'b1:src/world/bridges.ts': `@@ -64,8 +64,11 @@ export function sampleSuspensionSway(t: number, loadCount: number, elapsed: numb
+   const arch = Math.sin(t * Math.PI);
+-  const harmonic = Math.sin(elapsed * 6.2) * loadCount * 0.19;
+-  return arch * harmonic;
++  const crossBracing = 1 / (1 + loadCount * 0.65);
++  const dampedWave = Math.sin(elapsed * 3.1 + t * 2.4) * 0.045 * crossBracing;
++  return arch * dampedWave;
+ }`,
+  'm10:src/ui/inspector.ts': `@@ -88,7 +88,11 @@ export function stepCommitLineage(commit: CommitData, dir: 'parent' | 'child') {
+-  const candidates = dir === 'parent' ? commit.parents.slice(0, 1) : commit.children;
+-  return candidates[0] ?? null;
++  const candidates = dir === 'parent' ? commit.parents : commit.children;
++  const reachable = candidates.find((sha) => villagerRegistry.has(sha));
++  if (reachable) {
++    arcCameraAcrossBridge(commit.sha, reachable);
++  }
++  return reachable ?? null;
+ }`,
+  'm11:src/githubLoader.ts': `@@ -0,0 +1,14 @@
++export async function loadGitHubRepoVillage(owner: string, repo: string) {
++  const meta = await ghFetch(\`/repos/\${owner}/\${repo}\`);
++  const commits = await ghFetch(
++    \`/repos/\${owner}/\${repo}/commits?sha=\${meta.default_branch}&per_page=24\`,
++  );
++  return buildFloatingIslandsGraph(meta, commits);
++}
++
++export async function hydrateCommitDetail(owner: string, repo: string, sha: string) {
++  return ghFetch(\`/repos/\${owner}/\${repo}/commits/\${sha}\`);
++}`,
+  'm11:src/localLoader.ts': `@@ -0,0 +1,11 @@
++export async function loadLocalRepoVillage(localPath: string) {
++  const res = await fetch(\`/api/local-repo?path=\${encodeURIComponent(localPath)}\`);
++  if (!res.ok) throw new Error('Could not inspect local repository');
++  return res.json();
++}
++
++export async function hydrateLocalCommitDetail(localPath: string, sha: string) {
++  const res = await fetch(\`/api/local-commit-detail?path=\${encodeURIComponent(localPath)}&sha=\${sha}\`);
++  return res.json();
++}`,
+};
+
+function buildDemoFilePatch(seedId: string, subject: string, file: CommitFileChange): string {
+  const explicit = DEMO_FILE_PATCHES[`${seedId}:${file.filename}`];
+  if (explicit) return explicit;
+
+  const baseName = file.filename.split('/').pop() ?? file.filename;
+  const stem = baseName.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9]/g, '');
+  const fnName = stem ? `update${stem[0].toUpperCase()}${stem.slice(1)}` : 'applyChange';
+
+  if (file.filename.endsWith('.md')) {
+    if (file.status === 'added') {
+      return [
+        `@@ -0,0 +1,8 @@`,
+        `+# ${baseName.replace(/\.md$/, '')}`,
+        `+`,
+        `+> ${subject}`,
+        `+`,
+        `+- Floating branch islands linked at exact fork & merge commits`,
+        `+- Contributor clans with shared palettes, crests, and silhouettes`,
+        `+- Click any changed file in the Inspector to review unified diffs`,
+      ].join('\n');
+    }
+    return [
+      `@@ -18,5 +18,8 @@ ## GitVillage Architecture`,
+      ` Every branch materializes as its own floating island in the cloud sea.`,
+      `-See docs for basic controls.`,
+      `+Paste any \`owner/repo\` URL or open a local repository folder directly.`,
+      `+Use \`?repo=owner/repo\` or \`/gh/owner/repo\` for instant shareable deep links.`,
+      `+Click any changed file in the Commit Inspector to inspect line-by-line diffs.`,
+      ` `,
+    ].join('\n');
+  }
+
+  if (file.filename.endsWith('.css')) {
+    return [
+      `@@ -42,6 +42,10 @@ .spatial-hud {`,
+      `   backdrop-filter: blur(24px) saturate(180%);`,
+      `-  border-radius: 12px;`,
+      `+  border-radius: var(--radius-sheet);`,
+      `+  box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.22), 0 18px 42px rgba(2, 6, 23, 0.45);`,
+      `+}`,
+      `+`,
+      `+.file-diff-item[open] {`,
+      `+  background: rgba(255, 255, 255, 0.04);`,
+      ` }`,
+    ].join('\n');
+  }
+
+  if (file.filename.endsWith('.html')) {
+    return [
+      `@@ -9,6 +9,8 @@`,
+      `   <head>`,
+      `     <meta charset="utf-8" />`,
+      `-    <title>Commit Viewer</title>`,
+      `+    <title>GitVillage — Living 3D Git Repository</title>`,
+      `+    <meta name="theme-color" content="#0f172a" />`,
+      `   </head>`,
+      `   <body>`,
+    ].join('\n');
+  }
+
+  if (file.status === 'added') {
+    return [
+      `@@ -0,0 +1,11 @@`,
+      `+// ${subject}`,
+      `+export interface ${fnName[0].toUpperCase()}${fnName.slice(1)}Options {`,
+      `+  readonly intensity: number;`,
+      `+  readonly smoothFactor?: number;`,
+      `+}`,
+      `+`,
+      `+export function ${fnName}(options: ${fnName[0].toUpperCase()}${fnName.slice(1)}Options) {`,
+      `+  const damping = options.smoothFactor ?? 0.92;`,
+      `+  return { active: true, gain: options.intensity * damping };`,
+      `+}`,
+    ].join('\n');
+  }
+
+  return [
+    `@@ -24,7 +24,10 @@ export function ${fnName}(dt: number) {`,
+    `   const clampedDt = Math.min(dt, 0.05);`,
+    `-  const step = clampedDt * 0.5;`,
+    `-  return applyStep(step);`,
+    `+  // ${subject}`,
+    `+  const easedStep = 1 - Math.exp(-8.5 * clampedDt);`,
+    `+  const stabilized = Math.min(1, easedStep);`,
+    `+  return applyStep(stabilized);`,
+    ` }`,
+  ].join('\n');
+}
+
 export function createDemoRepoGraph(): RepoVillageGraph {
   const now = Date.now();
   const seeds: SeedCommit[] = [
@@ -355,8 +540,12 @@ export function createDemoRepoGraph(): RepoVillageGraph {
   const commitsBySha = new Map<string, CommitData>();
 
   for (const s of seeds) {
-    const additions = s.files.reduce((sum, f) => sum + f.additions, 0);
-    const deletions = s.files.reduce((sum, f) => sum + f.deletions, 0);
+    const hydratedFiles: CommitFileChange[] = s.files.map((f) => ({
+      ...f,
+      patch: f.patch ?? buildDemoFilePatch(s.id, s.subject, f),
+    }));
+    const additions = hydratedFiles.reduce((sum, f) => sum + f.additions, 0);
+    const deletions = hydratedFiles.reduce((sum, f) => sum + f.deletions, 0);
     const commit: CommitData = {
       sha: s.sha,
       shortSha: s.sha.slice(0, 7),
@@ -369,13 +558,14 @@ export function createDemoRepoGraph(): RepoVillageGraph {
       parents: [...s.parents],
       children: [],
       kind: classifyCommitKind(s.subject, s.parents.length),
-      filesCount: s.files.length,
+      filesCount: hydratedFiles.length,
       stats: {
         additions,
         deletions,
         total: additions + deletions,
       },
-      files: s.files,
+      files: hydratedFiles,
+      patchesHydrated: true,
     };
     commitsBySha.set(commit.sha, commit);
   }

@@ -277,6 +277,26 @@ export function SfIconSprite() {
           strokeLinejoin="round"
         />
       </symbol>
+      <symbol id="sf-expand" viewBox="0 0 20 20">
+        <path
+          d="M12.2 3.8h4v4M16.2 3.8l-4.8 4.8M7.8 16.2h-4v-4M3.8 16.2l4.8-4.8"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.65"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </symbol>
+      <symbol id="sf-code" viewBox="0 0 20 20">
+        <path
+          d="m6.8 6.5-3.5 3.5 3.5 3.5M13.2 6.5l3.5 3.5-3.5 3.5M11.2 4.5l-2.4 11"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.65"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </symbol>
     </svg>
   );
 }

@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { DiffCodeBlock } from '@/Components/DiffCodeBlock';
+import { getFileStatusBadge } from '@/Components/DiffViewerDialog';
 import { SfIcon } from '@/Components/SfIconSprite';
 import { sound } from '@/lib/sound';
 import {
@@ -24,6 +26,7 @@ interface InspectorSheetProps {
   onCelebrate: () => void;
   onLetVisitorsIn: () => void;
   onSyncLocal: () => void;
+  onOpenDiffModal: (filename?: string) => void;
 }
 
 function formatRelativeTime(iso: string): string {
@@ -51,8 +54,21 @@ export function InspectorSheet({
   onCelebrate,
   onLetVisitorsIn,
   onSyncLocal,
+  onOpenDiffModal,
 }: InspectorSheetProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [filesSectionOpen, setFilesSectionOpen] = useState(true);
+
+  const selectedKey =
+    selection?.kind === 'commit'
+      ? `c:${selection.commit.sha}`
+      : selection?.kind === 'visitor'
+        ? `v:${selection.visitor.filename}`
+        : '';
+
+  useEffect(() => {
+    setFilesSectionOpen(true);
+  }, [selectedKey]);
 
   if (!selection) {
     return <aside id="inspector-card" className="apple-sheet inspector-card" hidden />;
@@ -192,9 +208,22 @@ export function InspectorSheet({
         <div className="inset-group ins-diff-card">
           <div className="diff-header-row">
             <span className="diff-label">Line Impact</span>
-            <span id="ins-diff-text" className="diff-counts">
-              +{add} / −{del}
-            </span>
+            <div className="diff-header-right">
+              <span id="ins-diff-text" className="diff-counts">
+                +{add} / −{del}
+              </span>
+              {f.diffPreview && (
+                <button
+                  type="button"
+                  id="ins-open-diff-modal-btn"
+                  className="diff-expand-pill"
+                  onClick={() => onOpenDiffModal(f.filename)}
+                >
+                  <SfIcon name="sf-expand" size={11} />
+                  <span>Full Diff</span>
+                </button>
+              )}
+            </div>
           </div>
           <div className="diff-meter" aria-hidden="true">
             <div
@@ -209,18 +238,26 @@ export function InspectorSheet({
             />
           </div>
 
-          <details id="ins-files-details" className="apple-disclosure files-details" open={Boolean(f.diffPreview)}>
+          <details
+            id="ins-files-details"
+            className="apple-disclosure files-details"
+            open={filesSectionOpen}
+            onToggle={(e) => setFilesSectionOpen(e.currentTarget.open)}
+          >
             <summary>
               <SfIcon name="sf-chevron-right" size={13} className="disclosure-chevron" />
               <span id="ins-files-summary">
-                {f.diffPreview ? 'Working-tree diff preview' : 'Working-tree file change'}
+                {f.diffPreview ? 'Working-tree diff' : 'Working-tree file change'}
               </span>
             </summary>
-            {f.diffPreview && (
-              <pre id="ins-diff-preview" className="diff-preview-pre">
-                {f.diffPreview}
-              </pre>
-            )}
+            <div className="visitor-diff-wrap">
+              <DiffCodeBlock
+                id="ins-diff-preview"
+                patch={f.diffPreview}
+                maxHeight="13.5rem"
+                emptyMessage="Binary file or no line diff available"
+              />
+            </div>
           </details>
         </div>
       </aside>
@@ -373,9 +410,24 @@ export function InspectorSheet({
       <div className="inset-group ins-diff-card">
         <div className="diff-header-row">
           <span className="diff-label">Line Impact</span>
-          <span id="ins-diff-text" className="diff-counts">
-            {selection.isHydratingDiff ? 'Loading diff…' : `+${add} / −${del}`}
-          </span>
+          <div className="diff-header-right">
+            <span id="ins-diff-text" className="diff-counts">
+              {selection.isHydratingDiff && files.length === 0 ? 'Loading diff…' : `+${add} / −${del}`}
+            </span>
+            {files.length > 0 && (
+              <button
+                type="button"
+                id="ins-open-diff-modal-btn"
+                className="diff-expand-pill"
+                onClick={() =>
+                  onOpenDiffModal(files.length > 1 ? '__all__' : files[0]?.filename)
+                }
+              >
+                <SfIcon name="sf-expand" size={11} />
+                <span>Full Diff</span>
+              </button>
+            )}
+          </div>
         </div>
         <div className="diff-meter" aria-hidden="true">
           <div
@@ -390,24 +442,100 @@ export function InspectorSheet({
           />
         </div>
 
-        <details id="ins-files-details" className="apple-disclosure files-details">
+        <details
+          id="ins-files-details"
+          className="apple-disclosure files-details"
+          open={filesSectionOpen}
+          onToggle={(e) => setFilesSectionOpen(e.currentTarget.open)}
+        >
           <summary>
             <SfIcon name="sf-chevron-right" size={13} className="disclosure-chevron" />
             <span id="ins-files-summary">Changed files ({files.length})</span>
+            {files.length > 0 && <span className="files-click-hint">Click file for diff</span>}
           </summary>
-          <ul id="ins-files-list" className="files-list">
-            {files.map((file) => (
-              <li key={file.filename}>
-                <span className="file-path" title={file.filename}>
-                  {file.filename}
-                </span>
-                <span className="file-delta">
-                  <span className="delta-add">+{file.additions} </span>
-                  <span className="delta-del">−{file.deletions}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
+
+          {files.length === 0 ? (
+            <p className="files-empty-note">
+              {selection.isHydratingDiff
+                ? 'Fetching changed files and unified diffs…'
+                : 'No changed files recorded on this commit.'}
+            </p>
+          ) : (
+            <div id="ins-files-list" className="files-accordion" aria-label="Changed files">
+              {files.map((file) => {
+                const badge = getFileStatusBadge(file.status);
+                const patchCopyKey = `p:${commit.sha}:${file.filename}`;
+
+                return (
+                  <details
+                    key={`${commit.sha}:${file.filename}`}
+                    className="apple-disclosure file-diff-item"
+                    onToggle={(e) => {
+                      sound.playPop(e.currentTarget.open ? 610 : 470);
+                    }}
+                  >
+                    <summary className="file-diff-summary">
+                      <SfIcon name="sf-chevron-right" size={11} className="disclosure-chevron" />
+                      <span
+                        className={`file-status-pill ${badge.className}`}
+                        title={badge.label}
+                      >
+                        {badge.short}
+                      </span>
+                      <span className="file-path" title={file.filename}>
+                        {file.filename}
+                      </span>
+                      <span className="file-delta">
+                        <span className="delta-add">+{file.additions} </span>
+                        <span className="delta-del">−{file.deletions}</span>
+                      </span>
+                    </summary>
+
+                    <div className="file-diff-panel">
+                      <div className="file-diff-toolbar">
+                        <span className="file-diff-fullpath" title={file.filename}>
+                          {file.previousFilename
+                            ? `${file.previousFilename} → ${file.filename}`
+                            : file.filename}
+                        </span>
+                        <div className="file-diff-toolbar-btns">
+                          {file.patch && (
+                            <button
+                              type="button"
+                              className="diff-mini-btn"
+                              onClick={() => copyText(file.patch!, patchCopyKey)}
+                            >
+                              <SfIcon name="sf-copy" size={10} />
+                              <span>{copiedId === patchCopyKey ? 'Copied' : 'Copy'}</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="diff-mini-btn diff-mini-btn-accent"
+                            onClick={() => onOpenDiffModal(file.filename)}
+                          >
+                            <SfIcon name="sf-expand" size={10} />
+                            <span>Expand</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <DiffCodeBlock
+                        patch={file.patch}
+                        isLoading={Boolean(selection.isHydratingDiff && file.patch === undefined)}
+                        maxHeight="13rem"
+                        emptyMessage={
+                          file.additions === 0 && file.deletions === 0
+                            ? 'No line changes in this file'
+                            : 'Binary file or diff omitted'
+                        }
+                      />
+                    </div>
+                  </details>
+                );
+              })}
+            </div>
+          )}
         </details>
       </div>
     </aside>

@@ -91,9 +91,11 @@ interface GhCommitDetailResponse {
   stats?: { total: number; additions: number; deletions: number };
   files?: Array<{
     filename: string;
+    previous_filename?: string;
     status: string;
     additions: number;
     deletions: number;
+    patch?: string;
   }>;
 }
 
@@ -304,13 +306,14 @@ export async function hydrateCommitDetail(
   commit: CommitData,
   token?: string,
 ): Promise<void> {
-  if (commit.files && commit.stats) return;
+  if (commit.patchesHydrated) return;
   const key = `${owner}/${repo}/${commit.sha}`;
   const cached = detailCache.get(key);
   if (cached) {
     commit.filesCount = cached.filesCount;
     commit.stats = cached.stats;
     commit.files = cached.files;
+    commit.patchesHydrated = true;
     return;
   }
 
@@ -322,18 +325,21 @@ export async function hydrateCommitDetail(
   const rawFiles = detail.files ?? [];
   const filesCount = rawFiles.length;
   const stats = detail.stats ?? { additions: 0, deletions: 0, total: 0 };
-  const files: CommitFileChange[] = rawFiles.slice(0, 35).map((f) => ({
+  const files: CommitFileChange[] = rawFiles.slice(0, 40).map((f) => ({
     filename: f.filename,
+    previousFilename: f.previous_filename,
     status:
       f.status === 'added' || f.status === 'removed' || f.status === 'renamed'
         ? f.status
         : 'modified',
     additions: f.additions,
     deletions: f.deletions,
+    patch: f.patch,
   }));
 
   detailCache.set(key, { filesCount, stats, files });
   commit.filesCount = filesCount;
   commit.stats = stats;
   commit.files = files;
+  commit.patchesHydrated = true;
 }

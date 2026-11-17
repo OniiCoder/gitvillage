@@ -207,6 +207,7 @@ export async function loadLocalRepoVillage(
       parents: [],
       children: [],
       kind: 'feat',
+      patchesHydrated: true,
     };
     commitsBySha.set(placeholderSha, placeholder);
     branches.splice(0, branches.length, {
@@ -262,10 +263,10 @@ export async function hydrateLocalCommitDetail(
   localPath: string,
   commit: CommitData,
 ): Promise<void> {
-  if (commit.files && commit.stats) return;
+  if (commit.patchesHydrated) return;
   const res = await fetch(
     `/api/local-commit-detail?path=${encodeURIComponent(localPath)}&sha=${encodeURIComponent(commit.sha)}`,
-    { signal: AbortSignal.timeout(6000) },
+    { signal: AbortSignal.timeout(8000) },
   );
   if (!res.ok) return;
   const data = (await res.json()) as {
@@ -274,4 +275,6 @@ export async function hydrateLocalCommitDetail(
   };
   commit.stats = data.stats;
   commit.files = data.files;
+  commit.filesCount = Math.max(commit.filesCount ?? 0, data.files.length);
+  commit.patchesHydrated = true;
 }

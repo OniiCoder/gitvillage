@@ -46,7 +46,7 @@ class VillagePageTest extends TestCase
             ->assertOk()
             ->assertJsonStructure(['repos']);
 
-        $this->getJson('/api/local-repo?path=.')
+        $repoRes = $this->getJson('/api/local-repo?path=.')
             ->assertOk()
             ->assertJsonStructure([
                 'owner',
@@ -56,5 +56,20 @@ class VillagePageTest extends TestCase
                 'branches',
                 'gateVisitors',
             ]);
+
+        $headSha = $repoRes->json('branches.0.commits.0.sha');
+        $this->assertNotEmpty($headSha);
+
+        $detailRes = $this->getJson('/api/local-commit-detail?path=.&sha='.$headSha)
+            ->assertOk()
+            ->assertJsonStructure([
+                'stats' => ['additions', 'deletions', 'total'],
+                'files' => [
+                    '*' => ['filename', 'status', 'additions', 'deletions', 'patch'],
+                ],
+            ]);
+
+        $firstPatch = (string) $detailRes->json('files.0.patch');
+        $this->assertStringContainsString('@@', $firstPatch);
     }
 }
