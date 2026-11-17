@@ -883,8 +883,8 @@ export function buildArchipelagoWorld(graph: RepoVillageGraph): BuiltWorld {
 
     const gateSpanZ = 1.95; // half-span of archway
     for (const sgn of [-1, 1]) {
-      const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.75, 3.2, 0.75), pillarMat);
-      pillar.position.set(archX, 1.6, sgn * gateSpanZ);
+      const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.75, 3.7, 0.75), pillarMat);
+      pillar.position.set(archX, 1.85, sgn * gateSpanZ);
       pillar.castShadow = true;
       gateGroup.add(pillar);
 
@@ -902,31 +902,35 @@ export function buildArchipelagoWorld(graph: RepoVillageGraph): BuiltWorld {
       });
       animatedProps.lanternGlows.push(glowMat);
       const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.32, 0.24), glowMat);
-      lamp.position.set(archX + 0.42, 2.45, sgn * gateSpanZ);
+      lamp.position.set(archX + 0.42, 2.5, sgn * gateSpanZ);
       gateGroup.add(lamp);
     }
 
     // Overhead Gate Roof & Crossbeams
     const lintel = new THREE.Mesh(
-      new THREE.BoxGeometry(0.95, 0.42, gateSpanZ * 2 + 1.5),
+      new THREE.BoxGeometry(0.95, 0.4, gateSpanZ * 2 + 1.5),
       beamMat,
     );
-    lintel.position.set(archX, 3.35, 0);
+    lintel.position.set(archX, 3.85, 0);
     lintel.castShadow = true;
     gateGroup.add(lintel);
 
+    const roofMat = new THREE.MeshStandardMaterial({
+      color: visitorCount > 0 ? 0xd97706 : 0x059669,
+      roughness: 0.72,
+      flatShading: true,
+    });
     const gableRoof = new THREE.Mesh(
-      new THREE.ConeGeometry(3.2, 0.95, 4),
-      new THREE.MeshStandardMaterial({
-        color: visitorCount > 0 ? 0xd97706 : 0x059669,
-        roughness: 0.72,
-        flatShading: true,
-      }),
+      new THREE.BoxGeometry(1.22, 0.26, gateSpanZ * 2 + 1.95),
+      roofMat,
     );
-    gableRoof.scale.set(0.42, 1, 1.05);
-    gableRoof.rotation.y = Math.PI / 4;
-    gableRoof.position.set(archX, 3.98, 0);
-    gateGroup.add(gableRoof);
+    gableRoof.position.set(archX, 4.18, 0);
+    const roofRidge = new THREE.Mesh(
+      new THREE.BoxGeometry(0.66, 0.22, gateSpanZ * 2 + 2.25),
+      roofMat,
+    );
+    roofRidge.position.set(archX, 4.42, 0);
+    gateGroup.add(gableRoof, roofRidge);
 
     // Gate Overhead Sign Plaque (readable from both outside pier & inside island)
     const gateSignTex = makeSignTexture(
@@ -939,12 +943,14 @@ export function buildArchipelagoWorld(graph: RepoVillageGraph): BuiltWorld {
         : 'Clean working tree · 0 waiting',
     );
     const gatePlaque = new THREE.Mesh(
-      new THREE.BoxGeometry(0.16, 0.92, 2.85),
+      new THREE.BoxGeometry(2.85, 0.92, 0.12),
       new THREE.MeshBasicMaterial({ map: gateSignTex }),
     );
-    gatePlaque.position.set(archX + 0.46, 3.4, 0);
+    gatePlaque.rotation.y = Math.PI / 2;
+    gatePlaque.position.set(archX + 0.48, 3.22, 0);
     const gatePlaqueInner = gatePlaque.clone();
-    gatePlaqueInner.position.set(archX - 0.46, 3.4, 0);
+    gatePlaqueInner.rotation.y = -Math.PI / 2;
+    gatePlaqueInner.position.set(archX - 0.48, 3.22, 0);
     gateGroup.add(gatePlaque, gatePlaqueInner);
 
     // Hinged Double Wooden Gate Doors (slatted portcullis/picket doors so visitors can peek in!)

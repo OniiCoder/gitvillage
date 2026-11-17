@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Git Archipelago — 3D Commit Village</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <!-- Full-viewport 3D Canvas -->
+    <div id="canvas-wrap" aria-label="3D Git Commit Village">
+      <canvas id="village-canvas"></canvas>
+      <!-- Dynamic 2D projected overlays: hover pill + villager emote bubbles -->
+      <div id="overlay-layer" aria-hidden="true"></div>
+      <div id="hover-pill" class="hover-pill" hidden></div>
+      <div id="walk-hint" class="walk-hint" hidden>
+        <span><strong>WASD / Arrows</strong> Walk · <strong>Space</strong> Jump · <strong>E</strong> Talk to nearest commit · Drag to orbit camera</span>
+      </div>
+    </div>
+
+    <!-- Compact single-row Top Bar (< 12% viewport height) -->
+    <header class="top-bar">
+      <div class="brand-cluster">
+        <span class="brand-logo" aria-hidden="true">🏝️</span>
+        <div class="brand-meta">
+          <span class="brand-name">Git Archipelago</span>
+          <span id="repo-stats-pill" class="stats-pill">Loading…</span>
+        </div>
+      </div>
+
+      <form id="repo-form" class="repo-form" autocomplete="off">
+        <label for="repo-input" class="sr-only">GitHub repo or local folder path</label>
+        <input
+          id="repo-input"
+          name="repo"
+          type="text"
+          placeholder="owner/repo, GitHub URL, or local path (e.g. .)"
+          spellcheck="false"
+        />
+        <button type="submit" id="load-btn" class="btn btn-primary">Visit Repo</button>
+      </form>
+
+      <div class="toolbar-actions">
+        <button type="button" id="local-quick-btn" class="btn btn-local" title="Open local git repo and see uncommitted file visitors at the gate">
+          💻 Local Repo
+        </button>
+        <button type="button" class="btn btn-ghost" popovertarget="presets-popover">
+          🗺️ Presets
+        </button>
+        <button type="button" class="btn btn-ghost" popovertarget="roster-popover">
+          👥 Citizens
+        </button>
+        <button type="button" id="mode-btn" class="btn btn-accent" title="Toggle Walk Mode (WASD)">
+          🚶 Walk Mode
+        </button>
+        <button type="button" id="sky-btn" class="btn btn-icon" title="Cycle Time of Day" aria-label="Cycle Time of Day">
+          ☀️
+        </button>
+        <button type="button" id="sound-btn" class="btn btn-icon" title="Toggle Cozy Audio" aria-label="Toggle Cozy Audio">
+          🔊
+        </button>
+        <button type="button" id="help-btn" class="btn btn-icon" title="Village Field Guide" aria-label="Open Village Field Guide">
+          ?
+        </button>
+      </div>
+    </header>
+
+    <!-- Non-intrusive toast banner for loading / API status -->
+    <div id="toast-banner" class="toast-banner" role="status" aria-live="polite" hidden></div>
+
+    <!-- Presets & Token Popover -->
+    <div id="presets-popover" class="hud-popover" popover aria-label="Repositories">
+      <div class="popover-header">
+        <h3>💻 Local Git Repositories</h3>
+        <span class="popover-sub">Uncommitted file changes line up as visitors waiting at the Village Gate!</span>
+      </div>
+      <div id="local-repos-grid" class="preset-grid">
+        <button type="button" class="preset-card" data-local=".">
+          <strong>💻 Current Workspace (.)</strong>
+          <span>Inspect local git status &amp; gate visitors</span>
+        </button>
+      </div>
+
+      <div class="popover-header" style="margin-top: 10px">
+        <h3>🌐 Public GitHub Showcases</h3>
+        <span class="popover-sub">Click any repo to materialize its islands</span>
+      </div>
+      <div class="preset-grid">
+        <button type="button" class="preset-card" data-repo="demo">
+          <strong>🏝️ git-archipelago/sky-village</strong>
+          <span>Built-in showcase · 5 branch islands &amp; merge bridges</span>
+        </button>
+        <button type="button" class="preset-card" data-repo="mrdoob/three.js">
+          <strong>🔺 mrdoob/three.js</strong>
+          <span>JavaScript 3D library · lively multi-author commits</span>
+        </button>
+        <button type="button" class="preset-card" data-repo="vitejs/vite">
+          <strong>⚡ vitejs/vite</strong>
+          <span>Next-gen frontend tooling · features, fixes &amp; docs</span>
+        </button>
+        <button type="button" class="preset-card" data-repo="sveltejs/svelte">
+          <strong>🔥 sveltejs/svelte</strong>
+          <span>Web apps, streamlined · rich commit conversations</span>
+        </button>
+        <button type="button" class="preset-card" data-repo="pmndrs/zustand">
+          <strong>🐻 pmndrs/zustand</strong>
+          <span>Bear necessities state management · cozy island</span>
+        </button>
+        <button type="button" class="preset-card" data-repo="withastro/astro">
+          <strong>🚀 withastro/astro</strong>
+          <span>Content-driven web framework · bustling archipelago</span>
+        </button>
+      </div>
+      <details class="token-details">
+        <summary>Optional: GitHub Personal Access Token (higher rate limit)</summary>
+        <div class="token-box">
+          <p>Unauthenticated requests allow 60 API calls/hr. Add a read-only public token if needed (kept only in memory):</p>
+          <input
+            id="gh-token-input"
+            type="password"
+            placeholder="ghp_... or github_pat_..."
+            autocomplete="off"
+          />
+        </div>
+      </details>
+    </div>
+
+    <!-- Citizens Roster Popover -->
+    <div id="roster-popover" class="hud-popover roster-popover" popover aria-label="Village Citizens">
+      <div class="popover-header roster-header">
+        <div>
+          <h3>Village Census</h3>
+          <span class="popover-sub">Click any commit citizen or waiting gate visitor</span>
+        </div>
+        <div class="seg-toggle" role="group" aria-label="Group citizens by">
+          <button type="button" id="group-branch-btn" class="seg-btn is-active">By Island</button>
+          <button type="button" id="group-author-btn" class="seg-btn">By Author</button>
+        </div>
+      </div>
+      <div id="roster-list" class="roster-list"></div>
+    </div>
+
+    <!-- Bottom Filter Capsule -->
+    <nav class="bottom-dock" aria-label="Highlight commits by role">
+      <button type="button" class="filter-pill is-active" data-filter="all">All Citizens</button>
+      <button type="button" class="filter-pill" data-filter="feat">✨ Builders</button>
+      <button type="button" class="filter-pill" data-filter="fix">🐛 Bug Catchers</button>
+      <button type="button" class="filter-pill" data-filter="merge">🔀 Mayors</button>
+      <button type="button" class="filter-pill" data-filter="docs">📜 Scribes</button>
+      <button type="button" class="filter-pill" data-filter="refactor">🧹 Gardeners</button>
+      <span class="dock-divider" aria-hidden="true"></span>
+      <button type="button" id="gate-dock-btn" class="filter-pill gate-pill" title="Fly to the Village Gate to meet uncommitted file visitors" hidden>
+        ⛩️ Gate (0 waiting)
+      </button>
+      <button type="button" id="random-btn" class="filter-pill action-pill" title="Fly to a random commit">
+        🎲 Random Citizen
+      </button>
+      <button type="button" id="reset-cam-btn" class="filter-pill action-pill" title="Overview entire archipelago">
+        🔭 Overview
+      </button>
+    </nav>
+
+    <!-- Non-blocking Commit Villager / Gate Visitor Inspector Card -->
+    <aside id="inspector-card" class="inspector-card" aria-label="Selected Metadata" hidden>
+      <div class="inspector-top">
+        <div class="role-chip-row">
+          <span id="ins-role-badge" class="role-badge">✨ Feature</span>
+          <span id="ins-branch-badge" class="branch-badge">🌿 main</span>
+        </div>
+        <button type="button" id="ins-close-btn" class="btn-close" aria-label="Close card">✕</button>
+      </div>
+
+      <h2 id="ins-subject" class="ins-subject">Commit subject</h2>
+      <p id="ins-quirk" class="ins-quirk">Master Builder · hopping happily along main</p>
+
+      <div id="ins-author-row" class="ins-author-row">
+        <div id="ins-avatar" class="ins-avatar" aria-hidden="true">M</div>
+        <div class="ins-author-meta">
+          <strong id="ins-author-name">Author Name</strong>
+          <span id="ins-timestamp">2 hours ago</span>
+        </div>
+        <div class="ins-sha-group">
+          <button type="button" id="ins-sha-copy" class="sha-pill" title="Copy">
+            a1b2c3d
+          </button>
+          <a id="ins-gh-link" class="gh-ext-link" href="#" target="_blank" rel="noopener noreferrer" hidden>
+            GitHub ↗
+          </a>
+        </div>
+      </div>
+
+      <p id="ins-body" class="ins-body" hidden></p>
+
+      <div class="ins-actions-bar">
+        <button type="button" id="ins-prev-btn" class="btn btn-sm">← Parent</button>
+        <button type="button" id="ins-follow-btn" class="btn btn-sm btn-accent">🎥 Follow</button>
+        <button type="button" id="ins-cheer-btn" class="btn btn-sm">🎉 High-Five!</button>
+        <button type="button" id="ins-next-btn" class="btn btn-sm">Child →</button>
+      </div>
+
+      <div class="ins-diff-summary">
+        <span id="ins-diff-text" class="diff-counts">+0 / −0 lines</span>
+        <div class="diff-meter" aria-hidden="true">
+          <div id="ins-diff-add-bar" class="diff-add-bar"></div>
+          <div id="ins-diff-del-bar" class="diff-del-bar"></div>
+        </div>
+      </div>
+
+      <details id="ins-files-details" class="files-details">
+        <summary id="ins-files-summary">Changed files</summary>
+        <ul id="ins-files-list" class="files-list"></ul>
+        <pre id="ins-diff-preview" class="diff-preview-pre" hidden></pre>
+      </details>
+    </aside>
+
+    <!-- Light-Dismiss Village Field Guide Modal Dialog -->
+    <dialog id="help-dialog" class="guide-dialog" closedby="any" aria-labelledby="help-title">
+      <div class="dialog-header">
+        <h2 id="help-title">🏝️ Welcome to Git Archipelago</h2>
+        <button type="button" id="help-close-btn" class="btn-close" aria-label="Close guide">✕</button>
+      </div>
+      <p class="guide-lead">
+        Every commit in a repository lives here as an autonomous villager strolling, jumping, and chatting along floating branch islands!
+      </p>
+      <div class="guide-grid">
+        <div class="guide-item">
+          <strong>✨ Master Builders (feat)</strong>
+          <span>Wear hard-hats, carry crystal hammers, and leap with excitement over new features.</span>
+        </div>
+        <div class="guide-item">
+          <strong>🐛 Bug Catchers (fix)</strong>
+          <span>Wear safari pith helmets and swing bug nets to keep their island pest-free.</span>
+        </div>
+        <div class="guide-item">
+          <strong>🔀 Bridge Mayors (merge)</strong>
+          <span>Wear golden crowns &amp; royal capes near the suspension bridges linking branches.</span>
+        </div>
+        <div class="guide-item">
+          <strong>📜 Scribes &amp; 🧹 Gardeners</strong>
+          <span>Documentation scholars carry open tomes; refactorers prune the island bonsai.</span>
+        </div>
+      </div>
+      <div class="guide-controls">
+        <p><strong>Controls:</strong> Left-drag to orbit · Right-drag to pan · Scroll to zoom · Click any villager to inspect metadata &amp; traverse parent/child commits · Click <strong>🚶 Walk Mode</strong> to drop onto the islands yourself with <code>WASD</code> + <code>Space</code>!</p>
+      </div>
+      <div class="dialog-footer">
+        <button type="button" id="help-gotit-btn" class="btn btn-primary">Back to Village</button>
+      </div>
+    </dialog>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
