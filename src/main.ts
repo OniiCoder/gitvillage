@@ -2527,3 +2527,54 @@ if (import.meta.env.DEV && initialLocal) {
   repoInput.value = initialRepo;
   loadRepoBySpec(initialRepo, false);
 }
+
+// Director hooks (opt-in via ?director) for scripted, frame-perfect demo capture
+if (initialParams.has('director')) {
+  (window as unknown as { __village: unknown }).__village = {
+    THREE,
+    camera,
+    controls,
+    get villagers() {
+      return villagers;
+    },
+    get gateVisitors() {
+      return gateVisitors;
+    },
+    get clanMap() {
+      return clanMap;
+    },
+    get builtWorld() {
+      return builtWorld;
+    },
+    get activeGraph() {
+      return activeGraph;
+    },
+    keysPressed,
+    explorer,
+    focusOnVillager,
+    focusOnGateVisitor,
+    flyToOverview,
+    flyToGate,
+    applyAtmosphere,
+    setCameraMode,
+    triggerGatePreviewOpen,
+    loadLocalRepo,
+    loadRepoBySpec,
+    getCargo: (v: VillagerEntity) => getCommitCargoMetrics(v.commit),
+    setActiveAuthor(key: string | null) {
+      activeAuthorKey = key;
+      renderContributorStack();
+      applyVillagerFilter(activeFilter);
+    },
+    stopFlight() {
+      cameraFlight.active = false;
+      followVillager = false;
+    },
+    closeInspector() {
+      selectedVillager = null;
+      selectedGateVisitor = null;
+      followVillager = false;
+      inspectorCard.hidden = true;
+    },
+  };
+}
