@@ -1,0 +1,21 @@
+{
+  "name": "git-village",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "3D floating-island village where every git commit is a living villager",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@oddbird/popover-polyfill": "^0.6.1",
+    "three": "^0.181.2"
+  },
+  "devDependencies": {
+    "@types/three": "^0.181.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.4"
+  }
+}
