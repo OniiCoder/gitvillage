@@ -226,6 +226,7 @@ export class VillageEngine {
     this.scene.add(this.explorer.root);
 
     this.bindEvents();
+    sound.initAmbientMusic();
     this.rebuildVillageFromGraph(this.activeGraph);
 
     if (cb.directorMode) {
@@ -246,6 +247,7 @@ export class VillageEngine {
     window.cancelAnimationFrame(this.rafId);
     window.clearInterval(this.pollIntervalId);
     this.currentLoadController?.abort();
+    sound.stopAmbientMusic();
     for (const fn of this.cleanupFns) fn();
     this.controls.dispose();
     this.renderer.dispose();
@@ -341,6 +343,7 @@ export class VillageEngine {
         pMat.opacity = mode === 'night' ? 0.95 : mode === 'sunset' ? 0.7 : 0.35;
       }
     }
+    sound.setMood(mode);
     this.emit();
   }
 
