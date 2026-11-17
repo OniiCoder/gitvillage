@@ -220,13 +220,13 @@ function localGitVillagePlugin(): Plugin {
             const home = os.homedir();
             const scratch = path.dirname(process.cwd());
             const potentialRoots = [
-              { label: '🧪 Scratch', path: scratch },
-              { label: '🏠 Home', path: home },
-              { label: '💻 Projects', path: path.join(home, 'Projects') },
-              { label: '🛠️ Developer', path: path.join(home, 'Developer') },
-              { label: '📦 Code', path: path.join(home, 'Code') },
-              { label: '🖥️ Desktop', path: path.join(home, 'Desktop') },
-              { label: '📄 Documents', path: path.join(home, 'Documents') },
+              { label: 'Scratch', path: scratch },
+              { label: 'Home', path: home },
+              { label: 'Projects', path: path.join(home, 'Projects') },
+              { label: 'Developer', path: path.join(home, 'Developer') },
+              { label: 'Code', path: path.join(home, 'Code') },
+              { label: 'Desktop', path: path.join(home, 'Desktop') },
+              { label: 'Documents', path: path.join(home, 'Documents') },
             ];
             const roots: Array<{ label: string; path: string }> = [];
             for (const r of potentialRoots) {

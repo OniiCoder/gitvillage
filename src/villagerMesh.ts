@@ -31,44 +31,51 @@ export function getAuthorColorHex(login: string): number {
 export function getRoleMeta(kind: CommitKind): {
   title: string;
   badge: string;
+  dotClass: string;
   defaultEmotes: string[];
 } {
   switch (kind) {
     case 'feat':
       return {
         title: 'Master Builder',
-        badge: '✨ Feature',
+        badge: 'Feature',
+        dotClass: 'dot-amber',
         defaultEmotes: ['✨', '🔨', '🚀', '💡'],
       };
     case 'fix':
       return {
         title: 'Bug Catcher',
-        badge: '🐛 Bugfix',
-        defaultEmotes: ['🐛', '🔧', '🎯', '🩹'],
+        badge: 'Bugfix',
+        dotClass: 'dot-red',
+        defaultEmotes: ['🔧', '🎯', '🩹', '✨'],
       };
     case 'merge':
       return {
         title: 'Bridge Mayor',
-        badge: '🔀 Merge',
-        defaultEmotes: ['🎉', '🤝', '👑', '🎊'],
+        badge: 'Merge',
+        dotClass: 'dot-purple',
+        defaultEmotes: ['🎉', '🤝', '👑', '✨'],
       };
     case 'docs':
       return {
         title: 'Lore Scribe',
-        badge: '📜 Docs',
-        defaultEmotes: ['📜', '✒️', '📖', '🔍'],
+        badge: 'Documentation',
+        dotClass: 'dot-cyan',
+        defaultEmotes: ['📖', '✒️', '✨'],
       };
     case 'refactor':
       return {
         title: 'Bonsai Gardener',
-        badge: '🧹 Refactor',
-        defaultEmotes: ['🌿', '🧹', '💎', '✂️'],
+        badge: 'Refactor',
+        dotClass: 'dot-green',
+        defaultEmotes: ['🌿', '💎', '✂️'],
       };
     default:
       return {
         title: 'Clockwork Keeper',
-        badge: '⚙️ Chore',
-        defaultEmotes: ['⚙️', '📦', '🕯️', '👋'],
+        badge: 'Maintenance',
+        dotClass: 'dot-cyan',
+        defaultEmotes: ['⚙️', '📦', '👋'],
       };
   }
 }
@@ -498,20 +505,21 @@ export function createExplorerAvatar(): {
 
 export function getVisitorStatusMeta(status: WorkingTreeStatus): {
   label: string;
+  dotClass: string;
   color: number;
   emotes: string[];
 } {
   switch (status) {
     case 'untracked':
-      return { label: '🌱 New File (Untracked)', color: 0x10b981, emotes: ['🌱', '🆕', '🙋', '🔔'] };
+      return { label: 'Untracked File', dotClass: 'dot-green', color: 0x30d158, emotes: ['🌱', '🙋', '🔔'] };
     case 'added':
-      return { label: '✨ Added File', color: 0x22c55e, emotes: ['✨', '🎫', '🚀', '🙌'] };
+      return { label: 'Added File', dotClass: 'dot-green', color: 0x30d158, emotes: ['✨', '🎫', '🙌'] };
     case 'deleted':
-      return { label: '📦 Deleted File', color: 0xf43f5e, emotes: ['📦', '👋', '🕊️'] };
+      return { label: 'Deleted File', dotClass: 'dot-red', color: 0xff453a, emotes: ['📦', '👋'] };
     case 'renamed':
-      return { label: '🏷️ Renamed File', color: 0xa855f7, emotes: ['🏷️', '🔀', '🙋'] };
+      return { label: 'Renamed File', dotClass: 'dot-purple', color: 0xbf5af2, emotes: ['🏷️', '🙋'] };
     default:
-      return { label: '✏️ Modified File', color: 0xf59e0b, emotes: ['✏️', '🔔', '👀', '🙋'] };
+      return { label: 'Modified File', dotClass: 'dot-amber', color: 0xff9f0a, emotes: ['✏️', '🔔', '🙋'] };
   }
 }
 

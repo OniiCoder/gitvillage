@@ -24,32 +24,33 @@ function makeSignTexture(text: string, accentHex: string, subtitle: string): THR
   canvas.height = 192;
   const ctx = canvas.getContext('2d')!;
 
-  // Wood plaque background
-  ctx.fillStyle = '#291d18';
+  // Apple Dark Graphite Spatial Plaque
+  ctx.fillStyle = '#1c1c1e';
   ctx.beginPath();
-  ctx.roundRect(8, 8, 496, 176, 24);
+  ctx.roundRect(10, 10, 492, 172, 34);
   ctx.fill();
 
-  ctx.lineWidth = 8;
-  ctx.strokeStyle = accentHex;
+  // Subtle specular hairline border
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
   ctx.stroke();
 
-  // Accent dot
+  // Luminous semantic status dot
   ctx.fillStyle = accentHex;
   ctx.beginPath();
-  ctx.arc(46, 74, 13, 0, Math.PI * 2);
+  ctx.arc(48, 74, 10, 0, Math.PI * 2);
   ctx.fill();
 
-  // Branch title
-  ctx.fillStyle = '#f8fafc';
-  ctx.font = 'bold 38px ui-monospace, SFMono-Regular, Menlo, monospace';
-  const truncated = text.length > 21 ? `${text.slice(0, 20)}…` : text;
-  ctx.fillText(truncated, 74, 86);
+  // Branch / Gate title in crisp SF Pro / SF Mono
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '600 35px -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif';
+  const truncated = text.length > 22 ? `${text.slice(0, 21)}…` : text;
+  ctx.fillText(truncated, 72, 85);
 
-  // Subtitle
-  ctx.fillStyle = '#cbd5e1';
-  ctx.font = '500 24px system-ui, -apple-system, sans-serif';
-  ctx.fillText(subtitle, 40, 140);
+  // Muted secondary caption
+  ctx.fillStyle = 'rgba(235, 235, 245, 0.68)';
+  ctx.font = '500 22px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
+  ctx.fillText(subtitle, 40, 136);
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;

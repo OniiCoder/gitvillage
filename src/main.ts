@@ -37,6 +37,19 @@ if (!Object.hasOwn(HTMLElement.prototype, 'popover')) {
   import('@oddbird/popover-polyfill');
 }
 
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function makeSfIcon(symbolId: string, size = 14, extraClass = ''): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('class', extraClass ? `sf-icon ${extraClass}` : 'sf-icon');
+  svg.setAttribute('width', String(size));
+  svg.setAttribute('height', String(size));
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS(SVG_NS, 'use');
+  use.setAttribute('href', `#${symbolId}`);
+  svg.appendChild(use);
+  return svg;
+}
+
 // 2. Top-layer exit transition detection & dialog light-dismiss fallback
 let supportsDisplayTransition: boolean | undefined;
 function canTransitionDisplay(): boolean {
@@ -84,6 +97,7 @@ const statsPill = document.getElementById('repo-stats-pill') as HTMLSpanElement;
 const repoForm = document.getElementById('repo-form') as HTMLFormElement;
 const repoInput = document.getElementById('repo-input') as HTMLInputElement;
 const loadBtn = document.getElementById('load-btn') as HTMLButtonElement;
+const mainToolbar = document.getElementById('main-toolbar') as HTMLDivElement;
 const localQuickBtn = document.getElementById('local-quick-btn') as HTMLButtonElement;
 const localReposGrid = document.getElementById('local-repos-grid') as HTMLDivElement;
 const tokenInput = document.getElementById('gh-token-input') as HTMLInputElement;
@@ -97,7 +111,9 @@ const groupAuthorBtn = document.getElementById('group-author-btn') as HTMLButton
 
 const modeBtn = document.getElementById('mode-btn') as HTMLButtonElement;
 const skyBtn = document.getElementById('sky-btn') as HTMLButtonElement;
+const skyIconUse = document.getElementById('sky-icon-use') as unknown as SVGUseElement;
 const soundBtn = document.getElementById('sound-btn') as HTMLButtonElement;
+const soundIconUse = document.getElementById('sound-icon-use') as unknown as SVGUseElement;
 const helpBtn = document.getElementById('help-btn') as HTMLButtonElement;
 const helpDialog = document.getElementById('help-dialog') as HTMLDialogElement;
 const helpCloseBtn = document.getElementById('help-close-btn') as HTMLButtonElement;
@@ -121,6 +137,8 @@ const pickerLoadCurrentBtn = document.getElementById('picker-load-current-btn') 
 const pickerFolderList = document.getElementById('picker-folder-list') as HTMLDivElement;
 
 const gateDockBtn = document.getElementById('gate-dock-btn') as HTMLButtonElement;
+const gateStatusDot = document.getElementById('gate-status-dot') as HTMLSpanElement;
+const gateDockLabel = document.getElementById('gate-dock-label') as HTMLSpanElement;
 const randomBtn = document.getElementById('random-btn') as HTMLButtonElement;
 const resetCamBtn = document.getElementById('reset-cam-btn') as HTMLButtonElement;
 
@@ -135,6 +153,7 @@ const insAvatar = document.getElementById('ins-avatar') as HTMLDivElement;
 const insAuthorName = document.getElementById('ins-author-name') as HTMLElement;
 const insTimestamp = document.getElementById('ins-timestamp') as HTMLSpanElement;
 const insShaCopy = document.getElementById('ins-sha-copy') as HTMLButtonElement;
+const insShaText = document.getElementById('ins-sha-text') as HTMLSpanElement;
 const insGhLink = document.getElementById('ins-gh-link') as HTMLAnchorElement;
 const insBody = document.getElementById('ins-body') as HTMLParagraphElement;
 const insPrevBtn = document.getElementById('ins-prev-btn') as HTMLButtonElement;
@@ -149,7 +168,45 @@ const insFilesSummary = document.getElementById('ins-files-summary') as HTMLElem
 const insFilesList = document.getElementById('ins-files-list') as HTMLUListElement;
 const insDiffPreview = document.getElementById('ins-diff-preview') as HTMLPreElement;
 
-// Setup Dialog fallbacks & listeners (both Help Dialog and Local Picker Dialog)
+// 3. Single-tab-stop roving tabindex fallback for role="toolbar" when native focusgroup is absent
+if (!('focusGroup' in HTMLElement.prototype)) {
+  const toolbarItems = Array.from(mainToolbar.querySelectorAll<HTMLButtonElement>('button'));
+  toolbarItems.forEach((b, i) => {
+    b.tabIndex = i === 0 ? 0 : -1;
+  });
+  mainToolbar.addEventListener('focusin', ({ target }) => {
+    if (target instanceof HTMLButtonElement && toolbarItems.includes(target)) {
+      toolbarItems.forEach((b) => {
+        b.tabIndex = b === target ? 0 : -1;
+      });
+    }
+  });
+  mainToolbar.addEventListener('keydown', (e) => {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLButtonElement)) return;
+    const idx = toolbarItems.indexOf(active);
+    if (idx < 0) return;
+
+    const rtl = getComputedStyle(mainToolbar).direction === 'rtl';
+    let nextIdx: number | null = null;
+    if (e.key === 'ArrowRight') {
+      nextIdx = (idx + (rtl ? -1 : 1) + toolbarItems.length) % toolbarItems.length;
+    } else if (e.key === 'ArrowLeft') {
+      nextIdx = (idx + (rtl ? 1 : -1) + toolbarItems.length) % toolbarItems.length;
+    } else if (e.key === 'Home') {
+      nextIdx = 0;
+    } else if (e.key === 'End') {
+      nextIdx = toolbarItems.length - 1;
+    }
+
+    if (nextIdx !== null) {
+      e.preventDefault();
+      toolbarItems[nextIdx].focus();
+    }
+  });
+}
+
+// Setup Dialog fallbacks & listeners
 function wireLightDismissDialog(dialog: HTMLDialogElement): void {
   if (!('closedBy' in HTMLDialogElement.prototype)) {
     dialog.addEventListener('click', (event) => {
@@ -213,7 +270,7 @@ function computeLocalGraphFingerprint(graph: RepoVillageGraph): string {
   return `${headSha}::${visitorsKey}`;
 }
 
-// 3. Three.js Scene, Sky Gradient Shader, Lights & Controls
+// 4. Three.js Scene, Sky Gradient Shader, Lights & Controls
 const renderer = new THREE.WebGLRenderer({
   canvas,
   antialias: true,
@@ -291,7 +348,6 @@ dirLight.shadow.camera.bottom = -dCam;
 dirLight.shadow.bias = -0.0005;
 scene.add(dirLight);
 
-// Explorer Avatar for Walk Mode
 const explorer = createExplorerAvatar();
 scene.add(explorer.root);
 const explorerVelocity = { y: 0, grounded: true };
@@ -321,7 +377,6 @@ let timeOfDay: TimeOfDay = 'day';
 let cameraMode: CameraMode = 'orbit';
 let currentLoadController: AbortController | null = null;
 
-// Smooth Camera Flight Target
 let cameraFlight: {
   targetPos: THREE.Vector3;
   targetLook: THREE.Vector3;
@@ -339,7 +394,7 @@ controls.addEventListener('start', () => {
 function applyAtmosphere(mode: TimeOfDay): void {
   timeOfDay = mode;
   if (mode === 'day') {
-    skyBtn.textContent = '☀️';
+    skyIconUse.setAttribute('href', '#sf-sun');
     skyUniforms.uTopColor.value.set('#1d4ed8');
     skyUniforms.uMidColor.value.set('#38bdf8');
     skyUniforms.uBottomColor.value.set('#e0f2fe');
@@ -351,7 +406,7 @@ function applyAtmosphere(mode: TimeOfDay): void {
     dirLight.intensity = 1.85;
     dirLight.position.set(24, 38, 22);
   } else if (mode === 'sunset') {
-    skyBtn.textContent = '🌅';
+    skyIconUse.setAttribute('href', '#sf-sunset');
     skyUniforms.uTopColor.value.set('#311042');
     skyUniforms.uMidColor.value.set('#db2777');
     skyUniforms.uBottomColor.value.set('#fdba74');
@@ -363,7 +418,7 @@ function applyAtmosphere(mode: TimeOfDay): void {
     dirLight.intensity = 1.65;
     dirLight.position.set(-34, 15, 24);
   } else {
-    skyBtn.textContent = '🌙';
+    skyIconUse.setAttribute('href', '#sf-moon');
     skyUniforms.uTopColor.value.set('#020617');
     skyUniforms.uMidColor.value.set('#0f172a');
     skyUniforms.uBottomColor.value.set('#1e1b4b');
@@ -391,7 +446,7 @@ function applyAtmosphere(mode: TimeOfDay): void {
   }
 }
 
-// Spawn World + Commit Villagers + Local Working-Tree Gate Visitors!
+// Spawn World + Commit Villagers + Local Working-Tree Gate Visitors
 function rebuildVillageFromGraph(
   graph: RepoVillageGraph,
   options: { preserveCamera?: boolean; focusGateOnLoad?: boolean } = {},
@@ -444,7 +499,6 @@ function rebuildVillageFromGraph(
     });
   }
 
-  // Spawn 1-to-1 Gate Visitors for uncommitted local file changes!
   if (graph.isLocal && builtWorld.gate) {
     const gate = builtWorld.gate;
     const files = graph.gateVisitors ?? [];
@@ -465,7 +519,8 @@ function rebuildVillageFromGraph(
     });
 
     gateDockBtn.hidden = false;
-    gateDockBtn.textContent = `⛩️ Gate (${files.length} waiting)`;
+    gateDockLabel.textContent = `Gate · ${files.length}`;
+    gateStatusDot.className = `status-dot ${files.length > 0 ? 'dot-amber' : 'dot-green'}`;
   } else {
     gateDockBtn.hidden = true;
   }
@@ -478,9 +533,9 @@ function rebuildVillageFromGraph(
   const totalIslands = graph.branches.length;
   if (graph.isLocal) {
     const waitingCount = gateVisitors.length;
-    statsPill.textContent = `💻 ${graph.repo} · ${totalCommits} citizens · ${waitingCount} at gate`;
+    statsPill.textContent = `${graph.repo} · ${totalCommits} commits · ${waitingCount} at gate`;
   } else {
-    statsPill.textContent = `${graph.owner}/${graph.repo} · ${totalCommits} citizens · ${totalIslands} island${totalIslands === 1 ? '' : 's'}`;
+    statsPill.textContent = `${graph.repo} · ${totalCommits} commits · ${totalIslands} island${totalIslands === 1 ? '' : 's'}`;
   }
 
   if (!options.preserveCamera) {
@@ -608,8 +663,21 @@ function triggerGatePreviewOpen(): void {
     triggerVisitorEmote(gv, '🎉', 3.2);
   }
   showToast(
-    `⛩️ Previewing Gate Open! All ${gateVisitors.length} file visitor${gateVisitors.length === 1 ? '' : 's'} cheering into the village (run git commit to make them permanent citizens!)`,
+    `Previewing Gate Open — ${gateVisitors.length} file visitor${gateVisitors.length === 1 ? '' : 's'} entering the island. Run git commit to welcome them permanently.`,
   );
+}
+
+function setButtonWithIcon(btn: HTMLButtonElement, label: string, iconId?: string, trailing = false): void {
+  btn.replaceChildren();
+  const textSpan = document.createElement('span');
+  textSpan.textContent = label;
+  if (iconId) {
+    const icon = makeSfIcon(iconId, 13);
+    if (trailing) btn.append(textSpan, icon);
+    else btn.append(icon, textSpan);
+  } else {
+    btn.appendChild(textSpan);
+  }
 }
 
 // Populate Inspector for a Gate Visitor (Uncommitted File Change)
@@ -619,38 +687,36 @@ function populateVisitorInspector(gv: GateVisitorEntity): void {
   const meta = getVisitorStatusMeta(f.status);
 
   insRoleBadge.textContent = meta.label;
-  insBranchBadge.textContent = f.staged ? '🎫 Staged (git add)' : '⏳ Waiting at Gate';
+  insBranchBadge.textContent = f.staged ? 'Staged · git add' : 'Unstaged';
 
   const baseName = f.filename.split('/').pop() || f.filename;
   insSubject.textContent = baseName;
-  insQuirk.textContent = `${f.filename} · Visitor #${gv.index + 1} of ${gateVisitors.length} waiting outside ${activeGraph.defaultBranch}`;
+  insQuirk.textContent = `${f.filename} · Visitor ${gv.index + 1} of ${gateVisitors.length} outside ${activeGraph.defaultBranch}`;
 
-  insAvatar.replaceChildren();
+  insAvatar.replaceChildren(makeSfIcon('sf-gate', 16));
   insAvatar.style.background = `#${meta.color.toString(16).padStart(6, '0')}`;
-  insAvatar.textContent = f.staged ? '🎫' : '🧳';
 
   insAuthorName.textContent = f.staged
-    ? 'Ready at front of gate'
+    ? 'Ready at front of Gate'
     : 'Queued on Sky-Dock Pier';
   insTimestamp.textContent = f.staged
-    ? 'Will enter village on next git commit'
-    : 'Stage with git add & commit to let in';
+    ? 'Enters village on next git commit'
+    : 'Stage with git add and commit to admit';
 
-  insShaCopy.textContent = 'Copy path';
+  insShaText.textContent = 'Copy path';
   insShaCopy.onclick = () => {
     navigator.clipboard?.writeText(f.filename).catch(() => {});
-    insShaCopy.textContent = 'Copied!';
+    insShaText.textContent = 'Copied';
     sound.playPop(660);
     setTimeout(() => {
-      if (selectedGateVisitor === gv) insShaCopy.textContent = 'Copy path';
+      if (selectedGateVisitor === gv) insShaText.textContent = 'Copy path';
     }, 1000);
   };
   insGhLink.hidden = true;
   insBody.hidden = true;
 
-  // Visitor Queue Controls
-  insPrevBtn.textContent = '← Prev';
-  insNextBtn.textContent = 'Next →';
+  setButtonWithIcon(insPrevBtn, 'Prev', 'sf-arrow-left');
+  setButtonWithIcon(insNextBtn, 'Next', 'sf-arrow-right', true);
   insPrevBtn.disabled = gv.index <= 0;
   insNextBtn.disabled = gv.index >= gateVisitors.length - 1;
   insPrevBtn.onclick = () => {
@@ -662,11 +728,11 @@ function populateVisitorInspector(gv: GateVisitorEntity): void {
     if (next) focusOnGateVisitor(next);
   };
 
-  insFollowBtn.textContent = '🔓 Let In!';
+  setButtonWithIcon(insFollowBtn, 'Let In', 'sf-gate');
   insFollowBtn.classList.remove('is-active');
   insFollowBtn.onclick = () => triggerGatePreviewOpen();
 
-  insCheerBtn.textContent = '🔄 Sync Git';
+  setButtonWithIcon(insCheerBtn, 'Sync', 'sf-refresh');
   insCheerBtn.onclick = () => {
     if (activeGraph.localPath) {
       pollLocalRepoNow(true);
@@ -676,7 +742,7 @@ function populateVisitorInspector(gv: GateVisitorEntity): void {
   const add = f.additions;
   const del = f.deletions;
   const total = Math.max(1, add + del);
-  insDiffText.textContent = `+${add} additions / −${del} deletions in working tree`;
+  insDiffText.textContent = `+${add} / −${del}`;
   insDiffAddBar.style.width = `${Math.round((add / total) * 100)}%`;
   insDiffDelBar.style.width = `${Math.round((del / total) * 100)}%`;
 
@@ -697,11 +763,11 @@ async function populateCommitInspector(commit: CommitData): Promise<void> {
   inspectorCard.hidden = false;
   const role = getRoleMeta(commit.kind);
   insRoleBadge.textContent = role.badge;
-  insBranchBadge.textContent = `🌿 ${commit.branch}`;
+  insBranchBadge.textContent = commit.branch;
   insSubject.textContent = commit.subject;
 
   const authorCount = villagers.filter((v) => v.commit.authorLogin === commit.authorLogin).length;
-  insQuirk.textContent = `${role.title} · ${authorCount} commit${authorCount === 1 ? '' : 's'} by @${commit.authorLogin} in village`;
+  insQuirk.textContent = `${role.title} · ${authorCount} commit${authorCount === 1 ? '' : 's'} by @${commit.authorLogin}`;
 
   insAvatar.replaceChildren();
   const bgHex = `#${getAuthorColorHex(commit.authorLogin).toString(16).padStart(6, '0')}`;
@@ -717,14 +783,14 @@ async function populateCommitInspector(commit: CommitData): Promise<void> {
 
   insAuthorName.textContent = commit.authorName;
   insTimestamp.textContent = `${formatRelativeTime(commit.timestamp)} · ${new Date(commit.timestamp).toLocaleDateString()}`;
-  insShaCopy.textContent = commit.shortSha;
+  insShaText.textContent = commit.shortSha;
   insShaCopy.onclick = () => {
     navigator.clipboard?.writeText(commit.sha).catch(() => {});
-    insShaCopy.textContent = 'Copied!';
+    insShaText.textContent = 'Copied';
     sound.playPop(660);
     setTimeout(() => {
       if (selectedVillager?.commit.sha === commit.sha) {
-        insShaCopy.textContent = commit.shortSha;
+        insShaText.textContent = commit.shortSha;
       }
     }, 1100);
   };
@@ -743,10 +809,9 @@ async function populateCommitInspector(commit: CommitData): Promise<void> {
     insBody.hidden = true;
   }
 
-  // Restore standard Commit Citizen action buttons
-  insPrevBtn.textContent = '← Parent';
-  insNextBtn.textContent = 'Child →';
-  insFollowBtn.textContent = '🎥 Follow';
+  setButtonWithIcon(insPrevBtn, 'Parent', 'sf-arrow-left');
+  setButtonWithIcon(insNextBtn, 'Child', 'sf-arrow-right', true);
+  setButtonWithIcon(insFollowBtn, 'Follow', 'sf-viewfinder');
   insFollowBtn.classList.toggle('is-active', followVillager);
   insFollowBtn.onclick = () => {
     followVillager = !followVillager;
@@ -757,7 +822,7 @@ async function populateCommitInspector(commit: CommitData): Promise<void> {
     }
   };
 
-  insCheerBtn.textContent = '🎉 High-Five!';
+  setButtonWithIcon(insCheerBtn, 'Celebrate', 'sf-sparkles');
   insCheerBtn.onclick = () => {
     if (!selectedVillager) return;
     sound.playSelectVillager('merge');
@@ -800,7 +865,7 @@ async function populateCommitInspector(commit: CommitData): Promise<void> {
   renderCommitFiles(commit);
 
   if (!commit.files) {
-    insDiffText.textContent = 'Fetching diff stats…';
+    insDiffText.textContent = 'Loading…';
     try {
       if (activeGraph.isLocal && activeGraph.localPath) {
         await hydrateLocalCommitDetail(activeGraph.localPath, commit);
@@ -812,7 +877,7 @@ async function populateCommitInspector(commit: CommitData): Promise<void> {
       }
     } catch {
       if (selectedVillager?.commit.sha === commit.sha) {
-        insDiffText.textContent = 'Diff details unavailable';
+        insDiffText.textContent = 'Unavailable';
       }
     }
   }
@@ -822,7 +887,7 @@ function renderCommitFiles(commit: CommitData): void {
   const add = commit.stats?.additions ?? 0;
   const del = commit.stats?.deletions ?? 0;
   const total = Math.max(1, add + del);
-  insDiffText.textContent = `+${add} additions / −${del} deletions`;
+  insDiffText.textContent = `+${add} / −${del}`;
   insDiffAddBar.style.width = `${Math.round((add / total) * 100)}%`;
   insDiffDelBar.style.width = `${Math.round((del / total) * 100)}%`;
 
@@ -897,7 +962,7 @@ resetCamBtn.addEventListener('click', () => {
   flyToOverview();
 });
 
-// Citizens Roster Popover using Object.groupBy (+ Waiting Gate Visitors section!)
+// Citizens Roster Popover using Object.groupBy + Apple Inset Grouped Lists
 function renderRosterPopover(): void {
   const sections: HTMLElement[] = [];
 
@@ -905,9 +970,11 @@ function renderRosterPopover(): void {
     const gateWrap = document.createElement('div');
     const gateTitle = document.createElement('div');
     gateTitle.className = 'roster-group-title';
-    gateTitle.style.color = '#fde68a';
-    gateTitle.textContent = `⛩️ Waiting at Gate (${gateVisitors.length} uncommitted file${gateVisitors.length === 1 ? '' : 's'})`;
+    gateTitle.textContent = `Waiting at Gate (${gateVisitors.length})`;
     gateWrap.appendChild(gateTitle);
+
+    const gateBox = document.createElement('div');
+    gateBox.className = 'roster-group-box';
 
     for (const gv of gateVisitors) {
       const btn = document.createElement('button');
@@ -916,19 +983,24 @@ function renderRosterPopover(): void {
 
       const subj = document.createElement('span');
       subj.className = 'roster-row-subj';
-      subj.textContent = `${gv.file.staged ? '🎫' : '🧳'} ${gv.file.filename}`;
+      const dot = document.createElement('span');
+      dot.className = `status-dot ${getVisitorStatusMeta(gv.file.status).dotClass}`;
+      const nameTxt = document.createElement('span');
+      nameTxt.textContent = gv.file.filename;
+      subj.append(dot, nameTxt);
 
       const delta = document.createElement('span');
       delta.className = 'roster-row-sha';
-      delta.textContent = `+${gv.file.additions} −${gv.file.deletions}`;
+      delta.textContent = `${gv.file.staged ? 'Staged · ' : ''}+${gv.file.additions} −${gv.file.deletions}`;
 
       btn.append(subj, delta);
       btn.addEventListener('click', () => {
         rosterPopover.hidePopover?.();
         focusOnGateVisitor(gv);
       });
-      gateWrap.appendChild(btn);
+      gateBox.appendChild(btn);
     }
+    gateWrap.appendChild(gateBox);
     sections.push(gateWrap);
   }
 
@@ -946,6 +1018,9 @@ function renderRosterPopover(): void {
     title.textContent = `${key} (${list.length})`;
     wrapper.appendChild(title);
 
+    const groupBox = document.createElement('div');
+    groupBox.className = 'roster-group-box';
+
     for (const c of list.toReversed()) {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -954,7 +1029,11 @@ function renderRosterPopover(): void {
 
       const subj = document.createElement('span');
       subj.className = 'roster-row-subj';
-      subj.textContent = `${role.badge.split(' ')[0]} ${c.subject}`;
+      const dot = document.createElement('span');
+      dot.className = `status-dot ${role.dotClass}`;
+      const msgTxt = document.createElement('span');
+      msgTxt.textContent = c.subject;
+      subj.append(dot, msgTxt);
 
       const sha = document.createElement('span');
       sha.className = 'roster-row-sha';
@@ -966,8 +1045,9 @@ function renderRosterPopover(): void {
         const ent = villagerBySha.get(c.sha);
         if (ent) focusOnVillager(ent);
       });
-      wrapper.appendChild(btn);
+      groupBox.appendChild(btn);
     }
+    wrapper.appendChild(groupBox);
     sections.push(wrapper);
   }
   rosterList.replaceChildren(...sections);
@@ -975,19 +1055,19 @@ function renderRosterPopover(): void {
 
 groupBranchBtn.addEventListener('click', () => {
   rosterGroupMode = 'branch';
-  groupBranchBtn.classList.add('is-active');
-  groupAuthorBtn.classList.remove('is-active');
+  groupBranchBtn.setAttribute('aria-pressed', 'true');
+  groupAuthorBtn.setAttribute('aria-pressed', 'false');
   renderRosterPopover();
 });
 
 groupAuthorBtn.addEventListener('click', () => {
   rosterGroupMode = 'author';
-  groupAuthorBtn.classList.add('is-active');
-  groupBranchBtn.classList.remove('is-active');
+  groupAuthorBtn.setAttribute('aria-pressed', 'true');
+  groupBranchBtn.setAttribute('aria-pressed', 'false');
   renderRosterPopover();
 });
 
-// Populate Discovered Local Git Repositories inside Presets Popover & Local Picker Modal
+// Discovered Local Git Repositories & Folder Browser
 let cachedDiscoveredRepos: DiscoveredLocalRepo[] = [];
 let activeBrowseDirPath: string | undefined;
 
@@ -996,15 +1076,15 @@ function buildRepoPresetCard(r: DiscoveredLocalRepo, onSelect: () => void): HTML
   btn.type = 'button';
   btn.className = 'preset-card';
   const title = document.createElement('strong');
-  title.textContent = `💻 ${r.name}`;
+  title.textContent = r.name;
   const sub = document.createElement('span');
   sub.textContent = `${r.displayPath ?? r.path} · ${r.branch}`;
   const gateInfo = document.createElement('span');
-  gateInfo.className = 'local-badge';
+  gateInfo.className = r.changedFilesCount > 0 ? 'local-badge' : 'local-badge is-clean';
   gateInfo.textContent =
     r.changedFilesCount > 0
-      ? `⛩️ ${r.changedFilesCount} visitor${r.changedFilesCount === 1 ? '' : 's'} waiting at gate`
-      : '✨ Clean working tree (0 at gate)';
+      ? `${r.changedFilesCount} visitor${r.changedFilesCount === 1 ? '' : 's'} waiting at Gate`
+      : 'Clean working tree';
   btn.append(title, sub, gateInfo);
   btn.addEventListener('click', onSelect);
   return btn;
@@ -1022,7 +1102,7 @@ function renderFilteredDiscoveredGrid(filterText = ''): void {
             r.branch.toLowerCase().includes(q),
         );
 
-  discoveredCountLabel.textContent = `${filtered.length} repo${filtered.length === 1 ? '' : 's'} found`;
+  discoveredCountLabel.textContent = `${filtered.length} found`;
   const cards = filtered.map((r) =>
     buildRepoPresetCard(r, () => {
       closeTopLayerDialog(localPickerDialog);
@@ -1048,9 +1128,9 @@ async function refreshDiscoveredLocalRepos(): Promise<void> {
   browseMoreBtn.type = 'button';
   browseMoreBtn.className = 'preset-card';
   const bTitle = document.createElement('strong');
-  bTitle.textContent = '📂 Browse Any Folder…';
+  bTitle.textContent = 'Choose Another Folder…';
   const bSub = document.createElement('span');
-  bSub.textContent = 'Navigate folders on your Mac or open with Finder';
+  bSub.textContent = 'Browse directories on this Mac or open with Finder';
   browseMoreBtn.append(bTitle, bSub);
   browseMoreBtn.addEventListener('click', () => {
     presetsPopover.hidePopover?.();
@@ -1065,7 +1145,6 @@ async function loadPickerDirectory(targetPath?: string): Promise<void> {
     const data = await browseLocalDirectory(targetPath, pickerHiddenCheckbox.checked);
     activeBrowseDirPath = data.currentPath;
 
-    // Quick-jump root chips
     const rootBtns = data.roots.map((rt) => {
       const b = document.createElement('button');
       b.type = 'button';
@@ -1076,7 +1155,6 @@ async function loadPickerDirectory(targetPath?: string): Promise<void> {
     });
     pickerRoots.replaceChildren(...rootBtns);
 
-    // Semantic accessible Breadcrumbs (<ol> -> <li> -> <a>, last with aria-current="page")
     const crumbItems = data.breadcrumbs.map((bc, idx) => {
       const li = document.createElement('li');
       const a = document.createElement('a');
@@ -1094,14 +1172,13 @@ async function loadPickerDirectory(targetPath?: string): Promise<void> {
     });
     pickerBreadcrumbs.replaceChildren(...crumbItems);
 
-    // Current directory Git Repo banner
     if (data.currentGitRepo) {
       const repo = data.currentGitRepo;
-      pickerCurrentGitTitle.textContent = `🌿 "${repo.name}" is a Git repository`;
+      pickerCurrentGitTitle.textContent = `${repo.name}`;
       pickerCurrentGitSub.textContent =
         repo.changedFilesCount > 0
-          ? `Branch: ${repo.branch} · ⛩️ ${repo.changedFilesCount} changed file${repo.changedFilesCount === 1 ? '' : 's'} waiting at gate`
-          : `Branch: ${repo.branch} · ✨ Clean working tree`;
+          ? `Branch: ${repo.branch} · ${repo.changedFilesCount} changed file${repo.changedFilesCount === 1 ? '' : 's'} at Gate`
+          : `Branch: ${repo.branch} · Clean working tree`;
       pickerLoadCurrentBtn.onclick = () => {
         closeTopLayerDialog(localPickerDialog);
         loadLocalRepo(repo.path, true);
@@ -1111,7 +1188,6 @@ async function loadPickerDirectory(targetPath?: string): Promise<void> {
       pickerCurrentGitBanner.hidden = true;
     }
 
-    // Subfolder rows
     const rows: HTMLElement[] = [];
     if (data.parentPath) {
       const upRow = document.createElement('div');
@@ -1119,7 +1195,11 @@ async function loadPickerDirectory(targetPath?: string): Promise<void> {
       const upBtn = document.createElement('button');
       upBtn.type = 'button';
       upBtn.className = 'folder-nav-btn';
-      upBtn.textContent = '⬆️ .. (Parent folder)';
+      const arrowIcon = makeSfIcon('sf-arrow-left', 13, 'folder-icon-glyph');
+      const upTxt = document.createElement('span');
+      upTxt.className = 'folder-name-txt';
+      upTxt.textContent = 'Enclosing Folder';
+      upBtn.append(arrowIcon, upTxt);
       upBtn.addEventListener('click', () => loadPickerDirectory(data.parentPath!));
       upRow.appendChild(upBtn);
       rows.push(upRow);
@@ -1132,17 +1212,16 @@ async function loadPickerDirectory(targetPath?: string): Promise<void> {
       const navBtn = document.createElement('button');
       navBtn.type = 'button';
       navBtn.className = 'folder-nav-btn';
-      const iconSpan = document.createElement('span');
-      iconSpan.textContent = f.isGitRepo ? '📦' : '📁';
+      const iconSvg = makeSfIcon(f.isGitRepo ? 'sf-branch' : 'sf-folder', 14, 'folder-icon-glyph');
       const nameSpan = document.createElement('span');
       nameSpan.className = 'folder-name-txt';
       nameSpan.textContent = f.name;
-      navBtn.append(iconSpan, nameSpan);
+      navBtn.append(iconSvg, nameSpan);
 
       if (f.isGitRepo) {
         const tag = document.createElement('span');
         tag.className = 'git-folder-tag';
-        tag.textContent = 'Git Repo';
+        tag.textContent = 'Git';
         navBtn.appendChild(tag);
       }
 
@@ -1154,8 +1233,8 @@ async function loadPickerDirectory(targetPath?: string): Promise<void> {
       if (f.isGitRepo) {
         const openBtn = document.createElement('button');
         openBtn.type = 'button';
-        openBtn.className = 'btn btn-sm btn-primary';
-        openBtn.textContent = '🏝️ Open';
+        openBtn.className = 'sheet-btn sheet-btn-tinted';
+        openBtn.textContent = 'Open';
         openBtn.addEventListener('click', () => {
           closeTopLayerDialog(localPickerDialog);
           loadLocalRepo(f.path, true);
@@ -1193,7 +1272,6 @@ pickerPathForm.addEventListener('submit', async (e) => {
   const raw = pickerPathInput.value.trim();
   if (!raw) return;
 
-  // Try opening as a git repo directly; if it's a parent folder without .git, browse into it!
   try {
     const dirInfo = await browseLocalDirectory(raw, pickerHiddenCheckbox.checked);
     if (dirInfo.currentGitRepo) {
@@ -1201,7 +1279,7 @@ pickerPathForm.addEventListener('submit', async (e) => {
       await loadLocalRepo(dirInfo.currentGitRepo.path, true);
     } else {
       await loadPickerDirectory(dirInfo.currentPath);
-      showToast('Opened folder in browser below — pick a Git repository subfolder!');
+      showToast('Showing subfolders — select a Git repository below.');
     }
   } catch {
     closeTopLayerDialog(localPickerDialog);
@@ -1211,7 +1289,6 @@ pickerPathForm.addEventListener('submit', async (e) => {
 
 nativeFinderBtn.addEventListener('click', async () => {
   nativeFinderBtn.disabled = true;
-  nativeFinderBtn.textContent = 'Opening Finder…';
   try {
     const result = await pickNativeMacFolder();
     if (result.path && !result.cancelled) {
@@ -1223,7 +1300,6 @@ nativeFinderBtn.addEventListener('click', async () => {
     showToast(msg, true);
   } finally {
     nativeFinderBtn.disabled = false;
-    nativeFinderBtn.textContent = '📂 Finder…';
   }
 });
 
@@ -1239,8 +1315,7 @@ async function loadLocalRepo(pathSpec: string, updateUrl = true): Promise<void> 
   const controller = new AbortController();
   currentLoadController = controller;
   loadBtn.disabled = true;
-  loadBtn.textContent = 'Opening…';
-  showToast(`💻 Inspecting local git repository & working-tree gate…`, false, 0);
+  showToast('Opening local repository…', false, 0);
 
   try {
     const graph = await loadLocalRepoVillage(pathSpec, controller.signal);
@@ -1258,15 +1333,13 @@ async function loadLocalRepo(pathSpec: string, updateUrl = true): Promise<void> 
 
     if (waitingCount > 0) {
       showToast(
-        `⛩️ Local repo "${graph.repo}" loaded! ${waitingCount} changed file${waitingCount === 1 ? ' is' : 's are'} waiting at the Village Gate.`,
+        `${graph.repo} — ${waitingCount} uncommitted file${waitingCount === 1 ? '' : 's'} waiting at the Village Gate`,
       );
       if (gateVisitors.length > 0) {
         focusOnGateVisitor(gateVisitors[0], false, false);
       }
     } else {
-      showToast(
-        `✨ Local repo "${graph.repo}" loaded! Working tree is clean — Village Gate is wide open.`,
-      );
+      showToast(`${graph.repo} — Working tree clean, Village Gate open`);
     }
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') return;
@@ -1274,11 +1347,10 @@ async function loadLocalRepo(pathSpec: string, updateUrl = true): Promise<void> 
     showToast(message, true, 6000);
   } finally {
     loadBtn.disabled = false;
-    loadBtn.textContent = 'Visit Repo';
   }
 }
 
-// Live Polling for Local Git Working-Tree Changes (arriving/departing/committed visitors!)
+// Live Polling for Local Git Working-Tree Changes
 let isPollingLocal = false;
 async function pollLocalRepoNow(manualFeedback = false): Promise<void> {
   if (!activeGraph.isLocal || !activeGraph.localPath || isPollingLocal) return;
@@ -1298,17 +1370,17 @@ async function pollLocalRepoNow(manualFeedback = false): Promise<void> {
 
       if (nextHead !== prevHead) {
         showToast(
-          `🎉 Gate opened! New commit "${freshGraph.branches[0]?.commits.at(-1)?.subject ?? ''}" welcomed into the village!`,
+          `Gate opened — "${freshGraph.branches[0]?.commits.at(-1)?.subject ?? 'New commit'}" welcomed into the village`,
         );
       } else if (nextCount > prevCount) {
         showToast(
-          `🧳 ${nextCount - prevCount} new file visitor${nextCount - prevCount === 1 ? '' : 's'} arrived at the Village Gate (${nextCount} waiting)!`,
+          `${nextCount - prevCount} new file visitor${nextCount - prevCount === 1 ? '' : 's'} arrived at the Gate (${nextCount} waiting)`,
         );
       } else {
-        showToast(`⛩️ Working tree updated: ${nextCount} visitor${nextCount === 1 ? '' : 's'} waiting at the gate.`);
+        showToast(`Working tree updated — ${nextCount} visitor${nextCount === 1 ? '' : 's'} at the Gate`);
       }
     } else if (manualFeedback) {
-      showToast(`✅ Up to date: ${gateVisitors.length} file visitor${gateVisitors.length === 1 ? '' : 's'} at the gate.`);
+      showToast(`Working tree synced — ${gateVisitors.length} file${gateVisitors.length === 1 ? '' : 's'} at Gate`);
     }
   } catch {
     // ignore background poll glitches
@@ -1323,7 +1395,7 @@ window.setInterval(() => {
   }
 }, 3500);
 
-// Repo Loading Flow (dispatches between Local Path vs GitHub Repo vs Demo)
+// Repo Loading Flow
 async function loadRepoBySpec(spec: string, updateUrl = true): Promise<void> {
   if (isLocalPathInput(spec)) {
     await loadLocalRepo(spec, updateUrl);
@@ -1342,14 +1414,14 @@ async function loadRepoBySpec(spec: string, updateUrl = true): Promise<void> {
       url.searchParams.delete('local');
       window.history.replaceState({}, '', url);
     }
-    showToast('🏝️ Landed on built-in showcase village: git-archipelago/sky-village');
+    showToast('Showcase Village — git-archipelago/sky-village');
     return;
   }
 
   const parsed = parseRepoInput(spec);
   if (!parsed) {
     showToast(
-      'Enter a GitHub repo ("mrdoob/three.js") or a local folder path ("." or "/path/to/repo").',
+      'Enter a GitHub owner/repo or a local folder path (such as ~/Projects/app).',
       true,
     );
     return;
@@ -1358,8 +1430,7 @@ async function loadRepoBySpec(spec: string, updateUrl = true): Promise<void> {
   const controller = new AbortController();
   currentLoadController = controller;
   loadBtn.disabled = true;
-  loadBtn.textContent = 'Building…';
-  showToast(`⛵ Raising floating islands for ${parsed.owner}/${parsed.repo}…`, false, 0);
+  showToast(`Loading ${parsed.owner}/${parsed.repo}…`, false, 0);
 
   try {
     const graph = await loadGitHubRepoVillage(
@@ -1380,7 +1451,7 @@ async function loadRepoBySpec(spec: string, updateUrl = true): Promise<void> {
     }
 
     showToast(
-      `✨ Welcome to ${graph.owner}/${graph.repo}! ${villagers.length} commits strolling across ${graph.branches.length} islands.`,
+      `${graph.owner}/${graph.repo} — ${villagers.length} commits across ${graph.branches.length} islands`,
     );
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') return;
@@ -1388,7 +1459,6 @@ async function loadRepoBySpec(spec: string, updateUrl = true): Promise<void> {
     showToast(message, true, 6000);
   } finally {
     loadBtn.disabled = false;
-    loadBtn.textContent = 'Visit Repo';
   }
 }
 
@@ -1421,7 +1491,7 @@ document.querySelectorAll<HTMLButtonElement>('.preset-card[data-local]').forEach
   });
 });
 
-// Toolbar Toggles: Sky, Sound, Walk Mode
+// Toolbar Toggles: Sky, Sound, Walk Mode (ARIA-driven state)
 skyBtn.addEventListener('click', () => {
   const order: TimeOfDay[] = ['day', 'sunset', 'night'];
   const next = order[(order.indexOf(timeOfDay) + 1) % order.length];
@@ -1431,14 +1501,14 @@ skyBtn.addEventListener('click', () => {
 
 soundBtn.addEventListener('click', () => {
   const muted = sound.toggleMute();
-  soundBtn.textContent = muted ? '🔇' : '🔊';
+  soundBtn.setAttribute('aria-pressed', muted ? 'false' : 'true');
+  soundIconUse.setAttribute('href', muted ? '#sf-speaker-mute' : '#sf-speaker');
 });
 
 function setCameraMode(mode: CameraMode): void {
   cameraMode = mode;
   const isWalk = mode === 'walk';
-  modeBtn.classList.toggle('is-active', isWalk);
-  modeBtn.textContent = isWalk ? '🔭 Orbit Mode' : '🚶 Walk Mode';
+  modeBtn.setAttribute('aria-pressed', isWalk ? 'true' : 'false');
   explorer.root.visible = isWalk;
   walkHint.hidden = !isWalk;
 
@@ -1470,7 +1540,7 @@ modeBtn.addEventListener('click', () => {
   setCameraMode(cameraMode === 'orbit' ? 'walk' : 'orbit');
 });
 
-// Walkable Surface Evaluator (Islands + Sky-Dock Gate Pier + Suspension Bridges!)
+// Walkable Surface Evaluator
 function sampleWalkableSurfaceY(x: number, z: number, currentY: number): number | null {
   if (!builtWorld) return null;
   let bestY: number | null = null;
@@ -1489,7 +1559,6 @@ function sampleWalkableSurfaceY(x: number, z: number, currentY: number): number 
     }
   }
 
-  // Sky-Dock Waiting Pier outside the Gate
   if (builtWorld.gate) {
     const g = builtWorld.gate;
     const dx = Math.abs(x - g.dockCenter.x);
@@ -1521,7 +1590,6 @@ function sampleWalkableSurfaceY(x: number, z: number, currentY: number): number 
   return bestY;
 }
 
-// Keyboard Controls for Walk Mode
 window.addEventListener('keydown', (e) => {
   if (
     helpDialog.open ||
@@ -1572,7 +1640,7 @@ window.addEventListener('keyup', (e) => {
   keysPressed.delete(e.code);
 });
 
-// Pointer Raycasting (Hover & Click on Commit Villagers AND Gate Visitors!)
+// Pointer Raycasting
 const raycaster = new THREE.Raycaster();
 const pointerNDC = new THREE.Vector2();
 let pointerDownPos = { x: 0, y: 0 };
@@ -1602,7 +1670,7 @@ canvas.addEventListener('pointermove', (e) => {
       }
       if (gv) {
         canvas.style.cursor = 'pointer';
-        hoverPill.textContent = `${gv.file.staged ? '🎫 Staged' : '🧳 Waiting at Gate'} · ${gv.file.filename} (+${gv.file.additions} / −${gv.file.deletions})`;
+        hoverPill.textContent = `${gv.file.staged ? 'Staged' : 'Gate'} · ${gv.file.filename} (+${gv.file.additions} / −${gv.file.deletions})`;
         hoverPill.style.left = `${e.clientX}px`;
         hoverPill.style.top = `${e.clientY}px`;
         hoverPill.hidden = false;
@@ -1663,7 +1731,7 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// 4. Main Simulation & Animation Loop
+// 5. Simulation & Animation Loop
 const clock = new THREE.Clock();
 const projVec = new THREE.Vector3();
 const forwardVec = new THREE.Vector3();
@@ -1700,7 +1768,6 @@ function updateGateAndVisitors(dt: number, elapsed: number): void {
     const isHovered = gv === hoveredGateVisitor;
     const isSelected = gv === selectedGateVisitor;
 
-    // Aura ring highlight
     const auraMat = gv.auraRing.material as THREE.MeshBasicMaterial;
     const baseOpacity = gv.file.staged ? 0.58 : 0.25;
     const targetOp = isSelected ? 0.95 : isHovered ? 0.78 : baseOpacity;
@@ -1711,7 +1778,6 @@ function updateGateAndVisitors(dt: number, elapsed: number): void {
       gv.ticketMesh.position.y = 1.56 + Math.sin(elapsed * 3.5 + gv.phaseOffset) * 0.08;
     }
 
-    // Position: either rushing inside during Gate Preview or eagerly waiting at queueSlot!
     const dest = gatePreviewOpenTimer > 0.9 ? gv.rushTarget : gv.queueSlot;
     const distToDest = gv.root.position.distanceTo(dest);
 
@@ -1733,7 +1799,6 @@ function updateGateAndVisitors(dt: number, elapsed: number): void {
       gv.rightArm.rotation.x = -2.35 + Math.sin(elapsed * 14) * 0.45;
       gv.leftArm.rotation.x = -0.4;
     } else {
-      // Face -X toward the Village Gate, swaying & hopping eagerly to be let in!
       const peekSway = Math.sin(elapsed * 2.1 + gv.phaseOffset) * 0.22;
       gv.bodyGroup.rotation.y = -Math.PI / 2 + peekSway;
       gv.rightArm.rotation.x = -1.9 + Math.sin(elapsed * 8 + gv.phaseOffset) * 0.55;
@@ -1742,7 +1807,6 @@ function updateGateAndVisitors(dt: number, elapsed: number): void {
       gv.rightLeg.rotation.x = 0;
     }
 
-    // Eager hopping up and down outside the gate!
     gv.hopTimer -= dt;
     if (gv.hopTimer <= 0 && gv.jumpY === 0) {
       gv.jumpVelocity = 4.6 + (gv.file.staged ? 1.4 : 0.4);
@@ -1763,7 +1827,6 @@ function updateGateAndVisitors(dt: number, elapsed: number): void {
     }
     gv.bodyGroup.position.y = gv.jumpY;
 
-    // Project visitor speech bubble
     if (gv.emoteTimer > 0) {
       gv.emoteTimer -= dt;
       const el = emoteElements.get(`v:${gv.index}`);
@@ -2119,7 +2182,7 @@ function animate(): void {
   renderer.render(scene, camera);
 }
 
-// 5. Boot! Support ?local=... or ?repo=... or start in Demo Village
+// 6. Boot!
 const initialParams = new URL(window.location.href).searchParams;
 const initialLocal = initialParams.get('local');
 const initialRepo = initialParams.get('repo');
