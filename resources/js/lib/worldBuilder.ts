@@ -1,5 +1,11 @@
 import * as THREE from 'three';
-import type { BridgeLayout, GateLayout, IslandLayout, RepoVillageGraph } from '@/types/village';
+import type {
+  BranchIslandData,
+  BridgeLayout,
+  GateLayout,
+  IslandLayout,
+  RepoVillageGraph,
+} from '@/types/village';
 import { hashString } from './villagerMesh';
 
 export interface BuiltWorld {
@@ -446,6 +452,83 @@ function buildSuspensionBridge(
   return { group, curve };
 }
 
+function addBridgeApproachSpur(
+  islandMesh: THREE.Group,
+  islandCenter: THREE.Vector3,
+  spineCurve: THREE.CatmullRomCurve3,
+  anchorWorldX: number,
+  edgeWorldZ: number,
+  stoneGeo: THREE.BufferGeometry,
+  stoneMat: THREE.Material,
+): void {
+  // Find closest point along the island's main cobblestone spine to connect cleanly
+  let bestPt = spineCurve.getPointAt(0.5);
+  let bestDx = Infinity;
+  const samples = 40;
+  for (let i = 0; i <= samples; i++) {
+    const pt = spineCurve.getPointAt(i / samples);
+    const dx = Math.abs(pt.x - anchorWorldX);
+    if (dx < bestDx) {
+      bestDx = dx;
+      bestPt = pt;
+    }
+  }
+
+  const startLocalX = bestPt.x - islandCenter.x;
+  const startLocalZ = bestPt.z - islandCenter.z;
+  const endLocalX = anchorWorldX - islandCenter.x;
+  const endLocalZ = edgeWorldZ - islandCenter.z;
+
+  const dist = Math.hypot(endLocalX - startLocalX, endLocalZ - startLocalZ);
+  const steps = Math.max(3, Math.ceil(dist / 0.56));
+
+  for (let s = 1; s <= steps; s++) {
+    const t = s / steps;
+    const lx = startLocalX + (endLocalX - startLocalX) * t;
+    const lz = startLocalZ + (endLocalZ - startLocalZ) * t;
+    const st = new THREE.Mesh(stoneGeo, stoneMat);
+    st.position.set(lx, 0.024, lz);
+    st.scale.set(1.06, 1, 0.92);
+    st.rotation.y = s * 0.55;
+    st.receiveShadow = true;
+    islandMesh.add(st);
+  }
+
+  // Hewn stone bridge abutment / threshold pad + twin flanking stone bollards outside walkway
+  const thresholdPad = new THREE.Mesh(
+    new THREE.BoxGeometry(1.9, 0.09, 0.92),
+    stoneMat,
+  );
+  thresholdPad.position.set(endLocalX, 0.03, endLocalZ);
+  thresholdPad.receiveShadow = true;
+  islandMesh.add(thresholdPad);
+
+  const bollardGeo = new THREE.CylinderGeometry(0.11, 0.14, 0.42, 6);
+  for (const sgn of [-1, 1]) {
+    const bollard = new THREE.Mesh(bollardGeo, stoneMat);
+    bollard.position.set(endLocalX + sgn * 0.86, 0.23, endLocalZ);
+    bollard.castShadow = true;
+    islandMesh.add(bollard);
+  }
+}
+
+interface PlannedSideBranch {
+  branch: BranchIslandData;
+  bIdx: number;
+  zSide: -1 | 1;
+  bLength: number;
+  bWidth: number;
+  forkRatio: number;
+  mergeRatio: number | null;
+  centerX: number;
+  centerY: number;
+  centerZ: number;
+  mainForkX: number;
+  branchForkX: number;
+  mainMergeX: number | null;
+  branchMergeX: number | null;
+}
+
 export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
   const worldGroup = new THREE.Group();
   const islands: IslandLayout[] = [];
@@ -461,12 +544,187 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
   const mainBranch = graph.branches.find((b) => b.isDefault) ?? graph.branches[0];
   const sideBranches = graph.branches.filter((b) => b !== mainBranch);
 
-  // 1. Build Main Island along X axis
   const mainCommitCount = Math.max(2, mainBranch.commits.length);
-  const mainLength = Math.max(22, mainCommitCount * 2.55 + 7);
-  const mainWidth = 9.4;
+  const mainIndexBySha = new Map<string, number>();
+  mainBranch.commits.forEach((c, idx) => {
+    mainIndexBySha.set(c.sha, idx);
+  });
+
+  const commitRatioOnMain = (sha: string | undefined, fallbackRatio: number): number => {
+    if (!sha) return fallbackRatio;
+    const idx = mainIndexBySha.get(sha);
+    if (idx === undefined) return fallbackRatio;
+    return mainBranch.commits.length <= 1
+      ? 0.5
+      : 0.08 + (idx / (mainBranch.commits.length - 1)) * 0.8;
+  };
+
+  // Pre-plan North (zSide = -1) and South (zSide = +1) branch corridors so ZERO bridges or islands can overlap!
+  const rawSidePlans: PlannedSideBranch[] = sideBranches.map((branch, bIdx) => {
+    const cCount = Math.max(2, branch.commits.length);
+    const bLength = Math.max(10.2, cCount * 2.65 + 4.8);
+    const bWidth = 6.4;
+    const zSide: -1 | 1 = bIdx % 2 === 0 ? -1 : 1;
+    const fallbackRatio =
+      0.16 + ((bIdx + 0.5) / Math.max(1, sideBranches.length)) * 0.62;
+    const forkRatio = commitRatioOnMain(branch.forkFromSha, fallbackRatio);
+    const mergeIdx = branch.mergeIntoSha ? mainIndexBySha.get(branch.mergeIntoSha) : undefined;
+    const mergeRatio =
+      mergeIdx !== undefined
+        ? Math.max(forkRatio + 0.14, commitRatioOnMain(branch.mergeIntoSha, forkRatio + 0.2))
+        : null;
+
+    return {
+      branch,
+      bIdx,
+      zSide,
+      bLength,
+      bWidth,
+      forkRatio,
+      mergeRatio,
+      centerX: 0,
+      centerY: 0,
+      centerZ: 0,
+      mainForkX: 0,
+      branchForkX: 0,
+      mainMergeX: null,
+      branchMergeX: null,
+    };
+  });
+
+  const northPlans = rawSidePlans
+    .filter((p) => p.zSide === -1)
+    .toSorted((a, b) => a.forkRatio - b.forkRatio);
+  const southPlans = rawSidePlans
+    .filter((p) => p.zSide === 1)
+    .toSorted((a, b) => a.forkRatio - b.forkRatio);
+
+  const ISLAND_GAP_X = 4.8;
+  const computeSideSpan = (plans: PlannedSideBranch[]): number =>
+    plans.reduce((sum, p) => sum + p.bLength, 0) +
+    Math.max(0, plans.length - 1) * ISLAND_GAP_X;
+
+  const mainWidth = 9.6;
+  const mainLength = Math.max(
+    24,
+    mainCommitCount * 2.6 + 8,
+    computeSideSpan(northPlans) + 9,
+    computeSideSpan(southPlans) + 9,
+  );
   const mainCenter = new THREE.Vector3(0, 0, 0);
 
+  // Assign strictly disjoint horizontal island slots + strictly monotonic bridge anchors per side
+  for (const sideGroup of [northPlans, southPlans]) {
+    if (sideGroup.length === 0) continue;
+
+    // 1. Place islands in chronological order along X with guaranteed ISLAND_GAP_X open sky between them
+    const minIslandBound = -mainLength * 0.45;
+    const maxIslandBound = mainLength * 0.45;
+
+    sideGroup.forEach((p, idx) => {
+      const desiredForkX = -mainLength * 0.38 + p.forkRatio * (mainLength * 0.72);
+      const idealCenter = desiredForkX + p.bLength * 0.2;
+      const minLeft =
+        idx === 0
+          ? minIslandBound
+          : sideGroup[idx - 1].centerX + sideGroup[idx - 1].bLength * 0.5 + ISLAND_GAP_X;
+      p.centerX = Math.max(idealCenter, minLeft + p.bLength * 0.5);
+      p.centerY = (p.zSide === -1 ? 2.25 : 1.7) + (idx % 2) * 0.55;
+      p.centerZ = p.zSide * (mainWidth * 0.5 + p.bWidth * 0.5 + 6.4 + (idx % 2) * 0.9);
+    });
+
+    // Right-to-left pass so rightmost island stays framed alongside mainLength
+    const last = sideGroup[sideGroup.length - 1];
+    const overflowRight = last.centerX + last.bLength * 0.5 - maxIslandBound;
+    if (overflowRight > 0) {
+      last.centerX -= overflowRight;
+      for (let idx = sideGroup.length - 2; idx >= 0; idx--) {
+        const cur = sideGroup[idx];
+        const next = sideGroup[idx + 1];
+        const maxAllowedRight = next.centerX - next.bLength * 0.5 - ISLAND_GAP_X;
+        if (cur.centerX + cur.bLength * 0.5 > maxAllowedRight) {
+          cur.centerX = maxAllowedRight - cur.bLength * 0.5;
+        }
+      }
+    }
+
+    // 2. Compute strictly monotonic bridge anchor X coordinates on BOTH branch islands and main island!
+    const anchors: Array<{
+      plan: PlannedSideBranch;
+      kind: 'fork' | 'merge';
+      desiredMainX: number;
+      branchX: number;
+      mainX: number;
+    }> = [];
+
+    for (const p of sideGroup) {
+      const desiredForkMainX = -mainLength * 0.38 + p.forkRatio * (mainLength * 0.72);
+      if (p.mergeRatio !== null) {
+        p.branchForkX = p.centerX - p.bLength * 0.32;
+        p.branchMergeX = p.centerX + p.bLength * 0.32;
+        anchors.push({
+          plan: p,
+          kind: 'fork',
+          desiredMainX: desiredForkMainX * 0.45 + p.branchForkX * 0.55,
+          branchX: p.branchForkX,
+          mainX: 0,
+        });
+        const desiredMergeMainX = -mainLength * 0.38 + p.mergeRatio * (mainLength * 0.72);
+        anchors.push({
+          plan: p,
+          kind: 'merge',
+          desiredMainX: desiredMergeMainX * 0.45 + p.branchMergeX * 0.55,
+          branchX: p.branchMergeX,
+          mainX: 0,
+        });
+      } else {
+        p.branchForkX = p.centerX - p.bLength * 0.24;
+        p.branchMergeX = null;
+        anchors.push({
+          plan: p,
+          kind: 'fork',
+          desiredMainX: desiredForkMainX * 0.45 + p.branchForkX * 0.55,
+          branchX: p.branchForkX,
+          mainX: 0,
+        });
+      }
+    }
+
+    const MIN_MAIN_ANCHOR_GAP = 4.6;
+    const minMainX = -mainLength * 0.38;
+    const maxMainX = mainLength * 0.36; // keep eastern tip clear for HEAD beacon
+
+    anchors.forEach((a, idx) => {
+      const floorX = idx === 0 ? minMainX : anchors[idx - 1].mainX + MIN_MAIN_ANCHOR_GAP;
+      a.mainX = Math.max(floorX, Math.min(maxMainX, a.desiredMainX));
+    });
+
+    for (let idx = anchors.length - 1; idx >= 0; idx--) {
+      const ceilX = idx === anchors.length - 1 ? maxMainX : anchors[idx + 1].mainX - MIN_MAIN_ANCHOR_GAP;
+      if (anchors[idx].mainX > ceilX) {
+        anchors[idx].mainX = ceilX;
+      }
+    }
+
+    for (const a of anchors) {
+      if (a.kind === 'fork') a.plan.mainForkX = a.mainX;
+      else a.plan.mainMergeX = a.mainX;
+    }
+  }
+
+  // Collect all main-island bridge landing corridors so props & trees NEVER block bridge entrances/exits
+  const mainBridgeCorridors: Array<{ x: number; zSide: -1 | 1 }> = [];
+  for (const p of [...northPlans, ...southPlans]) {
+    mainBridgeCorridors.push({ x: p.mainForkX, zSide: p.zSide });
+    if (p.mainMergeX !== null) {
+      mainBridgeCorridors.push({ x: p.mainMergeX, zSide: p.zSide });
+    }
+  }
+
+  const isMainSpotBlockedByBridge = (x: number, zSide: -1 | 1, clearance = 2.85): boolean =>
+    mainBridgeCorridors.some((c) => c.zSide === zSide && Math.abs(c.x - x) < clearance);
+
+  // 1. Build Main Island along X axis
   const mainMesh = createIslandMesh(
     mainLength,
     mainWidth,
@@ -482,12 +740,12 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
   for (let i = 0; i <= mainSteps; i++) {
     const t = i / mainSteps;
     const x = -mainLength * 0.42 + t * (mainLength * 0.84);
-    const z = Math.sin(t * Math.PI * 2.5) * 1.15;
+    const z = Math.sin(t * Math.PI * 2.5) * 0.95;
     mainPathPts.push(new THREE.Vector3(x, 0.02, z));
   }
   const mainCurve = new THREE.CatmullRomCurve3(mainPathPts);
 
-  // Stepping stones along path
+  // Stepping stones along main spine path
   const stoneGeo = new THREE.CylinderGeometry(0.42, 0.46, 0.06, 7);
   const stoneMat = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.9 });
   const stoneTotal = Math.floor(mainLength * 1.3);
@@ -510,7 +768,8 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
     mainWaypoints.set(c.sha, mainCurve.getPointAt(t));
   });
 
-  // Main island signpost
+  // Main island signpost (placed at western tip away from any bridge landing)
+  const signSide: -1 | 1 = isMainSpotBlockedByBridge(-mainLength * 0.43, -1, 3.0) ? 1 : -1;
   const mainSignGroup = new THREE.Group();
   const signTex = makeSignTexture(
     mainBranch.name,
@@ -530,11 +789,11 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
   const postR = postL.clone();
   postR.position.x = 0.9;
   mainSignGroup.add(postL, postR, signBoard);
-  mainSignGroup.position.set(-mainLength * 0.43, 0, -2.6);
-  mainSignGroup.rotation.y = 0.35;
+  mainSignGroup.position.set(-mainLength * 0.43, 0, signSide * 2.65);
+  mainSignGroup.rotation.y = signSide === -1 ? 0.35 : -0.35;
   mainMesh.add(mainSignGroup);
 
-  //HEAD Crystal Beacon at the newest end of Main Island
+  // HEAD Crystal Beacon at the newest end of Main Island
   const headPos = mainCurve.getPointAt(0.96);
   const beaconPedestal = new THREE.Mesh(
     new THREE.CylinderGeometry(0.75, 0.95, 0.45, 8),
@@ -558,20 +817,67 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
   mainMesh.add(headCrystal);
   animatedProps.headBeacon = headCrystal;
 
-  // Decorate Main Island with cottages, windmill, trees & lanterns
-  addWindmill(mainMesh, 1.5, -2.9, animatedProps.windmillBlades);
-  addCottage(mainMesh, -mainLength * 0.22, -2.85, 0.2, mainBranch.color, animatedProps.windowGlows);
-  addCottage(mainMesh, mainLength * 0.2, 2.9, Math.PI - 0.25, '#fbbf24', animatedProps.windowGlows);
+  // Place Windmill & Cottages on Main Island strictly outside all bridge entrance/exit corridors!
+  const placedMainBuildings: Array<{ x: number; zSide: -1 | 1 }> = [
+    { x: -mainLength * 0.43, zSide: signSide },
+  ];
+
+  const pickClearMainSpot = (
+    preferredX: number,
+    preferredSide: -1 | 1,
+    clearance = 3.05,
+  ): { x: number; zSide: -1 | 1 } | null => {
+    const offsets = [0, 2.2, -2.2, 4.4, -4.4, 6.6, -6.6, 8.8, -8.8];
+    for (const zSide of [preferredSide, (preferredSide * -1) as -1 | 1]) {
+      for (const dx of offsets) {
+        const candX = preferredX + dx;
+        if (candX < -mainLength * 0.37 || candX > mainLength * 0.34) continue;
+        if (isMainSpotBlockedByBridge(candX, zSide, clearance)) continue;
+        if (placedMainBuildings.some((b) => b.zSide === zSide && Math.abs(b.x - candX) < 3.8)) {
+          continue;
+        }
+        placedMainBuildings.push({ x: candX, zSide });
+        return { x: candX, zSide };
+      }
+    }
+    return null;
+  };
+
+  const millSpot = pickClearMainSpot(1.5, -1, 3.2);
+  if (millSpot) {
+    addWindmill(mainMesh, millSpot.x, millSpot.zSide * 2.85, animatedProps.windmillBlades);
+  }
+  const cot1Spot = pickClearMainSpot(-mainLength * 0.2, -1, 3.0);
+  if (cot1Spot) {
+    addCottage(
+      mainMesh,
+      cot1Spot.x,
+      cot1Spot.zSide * 2.8,
+      cot1Spot.zSide === -1 ? 0.2 : Math.PI - 0.2,
+      mainBranch.color,
+      animatedProps.windowGlows,
+    );
+  }
+  const cot2Spot = pickClearMainSpot(mainLength * 0.2, 1, 3.0);
+  if (cot2Spot) {
+    addCottage(
+      mainMesh,
+      cot2Spot.x,
+      cot2Spot.zSide * 2.8,
+      cot2Spot.zSide === 1 ? Math.PI - 0.25 : 0.25,
+      '#fbbf24',
+      animatedProps.windowGlows,
+    );
+  }
 
   const treeSlots = Math.max(6, Math.floor(mainLength / 3.4));
   for (let i = 0; i < treeSlots; i++) {
-    const tx = -mainLength * 0.41 + (i / (treeSlots - 1)) * (mainLength * 0.82);
-    const side = i % 2 === 0 ? 1 : -1;
-    if (Math.abs(tx - 1.5) < 2.6 && side === -1) continue;
-    if (Math.abs(tx + mainLength * 0.22) < 2.4 && side === -1) continue;
-    if (Math.abs(tx - mainLength * 0.2) < 2.4 && side === 1) continue;
-    addTree(mainMesh, tx, side * (2.8 + (i % 3) * 0.45), i * 17 + 3, mainBranch.color);
-    if (i % 2 === 0) {
+    const tx = -mainLength * 0.4 + (i / Math.max(1, treeSlots - 1)) * (mainLength * 0.76);
+    const side: -1 | 1 = i % 2 === 0 ? 1 : -1;
+    if (isMainSpotBlockedByBridge(tx, side, 2.5)) continue;
+    if (placedMainBuildings.some((b) => b.zSide === side && Math.abs(b.x - tx) < 2.7)) continue;
+    addTree(mainMesh, tx, side * (2.85 + (i % 3) * 0.4), i * 17 + 3, mainBranch.color);
+    if (i % 2 === 0 && !isMainSpotBlockedByBridge(tx + 0.6, side, 2.3)) {
       addLanternPost(mainMesh, tx + 0.6, side * 1.75, animatedProps.lanternGlows);
     }
   }
@@ -586,28 +892,12 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
     signMesh: signBoard,
   });
 
-  // 2. Build Floating Feature / Topic Branch Islands + Suspension Bridges!
-  sideBranches.forEach((branch, bIdx) => {
-    const cCount = Math.max(2, branch.commits.length);
-    const bLength = Math.max(9.5, cCount * 2.65 + 4.5);
-    const bWidth = 6.2;
+  // 2. Build Floating Feature / Topic Branch Islands + Non-Overlapping Bridges + Paved Entrance/Exit Spurs!
+  const orderedPlans = rawSidePlans.toSorted((a, b) => a.bIdx - b.bIdx);
 
-    const zSide = bIdx % 2 === 0 ? -1 : 1;
-    const tierOffset = Math.floor(bIdx / 2);
-
-    // Anchor X near fork commit on main if known
-    const forkPt =
-      (branch.forkFromSha ? mainWaypoints.get(branch.forkFromSha) : undefined) ??
-      new THREE.Vector3(
-        -mainLength * 0.25 + ((bIdx + 0.5) / Math.max(1, sideBranches.length)) * (mainLength * 0.55),
-        0,
-        0,
-      );
-
-    const islandX = forkPt.x + bLength * 0.34 + tierOffset * 3.0;
-    const islandY = (bIdx % 2 === 0 ? 2.35 : 1.65) + tierOffset * 1.4;
-    const islandZ = zSide * (mainWidth * 0.5 + bWidth * 0.5 + 5.6 + tierOffset * 3.5);
-    const bCenter = new THREE.Vector3(islandX, islandY, islandZ);
+  for (const plan of orderedPlans) {
+    const { branch, bIdx, zSide, bLength, bWidth } = plan;
+    const bCenter = new THREE.Vector3(plan.centerX, plan.centerY, plan.centerZ);
 
     const bMesh = createIslandMesh(
       bLength,
@@ -624,12 +914,12 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
     for (let i = 0; i <= 6; i++) {
       const t = i / 6;
       const lx = -bLength * 0.39 + t * (bLength * 0.78);
-      const lz = Math.sin(t * Math.PI * 1.5) * 0.65;
+      const lz = Math.sin(t * Math.PI * 1.5) * 0.48;
       bPathPts.push(new THREE.Vector3(bCenter.x + lx, bCenter.y + 0.02, bCenter.z + lz));
     }
     const bCurve = new THREE.CatmullRomCurve3(bPathPts);
 
-    // Stepping stones
+    // Stepping stones along branch spine
     const bStones = Math.floor(bLength * 1.2);
     for (let s = 0; s <= bStones; s++) {
       const pt = bCurve.getPointAt(s / bStones);
@@ -639,7 +929,8 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
       bMesh.add(st);
     }
 
-    // Branch Signpost
+    // Place Branch Signpost, Cottage & Trees strictly on the OUTER scenic half (`+zSide`),
+    // keeping the entire bridge-facing inner half (`-zSide`) 100% unobstructed!
     const bSign = new THREE.Group();
     const bTex = makeSignTexture(
       branch.name,
@@ -659,22 +950,22 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
     const p2 = p1.clone();
     p2.position.x = 0.8;
     bSign.add(p1, p2, bBoard);
-    bSign.position.set(-bLength * 0.38, 0, -zSide * 1.6);
-    bSign.rotation.y = zSide > 0 ? Math.PI - 0.3 : 0.3;
+    bSign.position.set(-bLength * 0.27, 0, zSide * 1.85);
+    // Always face toward the front (+Z) camera so branch labels are crisp & legible!
+    bSign.rotation.y = 0.18;
     bMesh.add(bSign);
 
-    // Cozy cottage + trees on branch island
     addCottage(
       bMesh,
-      0.4,
-      zSide * 1.65,
+      bLength * 0.14,
+      zSide * 1.75,
       zSide > 0 ? Math.PI : 0,
       branch.color,
       animatedProps.windowGlows,
     );
-    addTree(bMesh, -bLength * 0.25, zSide * 1.85, bIdx * 31 + 7, branch.color);
-    addTree(bMesh, bLength * 0.28, -zSide * 1.65, bIdx * 19 + 4, branch.color);
-    addLanternPost(bMesh, 0, -zSide * 1.35, animatedProps.lanternGlows);
+    addTree(bMesh, -bLength * 0.41, zSide * 1.9, bIdx * 31 + 7, branch.color);
+    addTree(bMesh, bLength * 0.37, zSide * 1.85, bIdx * 19 + 4, branch.color);
+    addLanternPost(bMesh, -0.3, zSide * 1.25, animatedProps.lanternGlows);
 
     const bWaypoints = new Map<string, THREE.Vector3>();
     branch.commits.forEach((c, idx) => {
@@ -695,17 +986,32 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
       signMesh: bBoard,
     });
 
-    // Fork Suspension Bridge (Main -> Branch Island start)
-    const mainEdgeStart = new THREE.Vector3(
-      forkPt.x,
-      0.04,
-      zSide * (mainWidth * 0.44),
+    const mainEdgeZ = zSide * (mainWidth * 0.45);
+    const branchInnerEdgeZ = bCenter.z - zSide * (bWidth * 0.44);
+
+    // Fork Suspension Bridge + Paved Entrance Spur (on Main) + Paved Exit Spur (on Branch)
+    const mainEdgeStart = new THREE.Vector3(plan.mainForkX, 0.04, mainEdgeZ);
+    const branchEdgeStart = new THREE.Vector3(plan.branchForkX, bCenter.y + 0.04, branchInnerEdgeZ);
+
+    addBridgeApproachSpur(
+      mainMesh,
+      mainCenter,
+      mainCurve,
+      plan.mainForkX,
+      mainEdgeZ,
+      stoneGeo,
+      stoneMat,
     );
-    const branchEdgeStart = new THREE.Vector3(
-      bCenter.x - bLength * 0.36,
-      bCenter.y + 0.04,
-      bCenter.z - zSide * (bWidth * 0.43),
+    addBridgeApproachSpur(
+      bMesh,
+      bCenter,
+      bCurve,
+      plan.branchForkX,
+      branchInnerEdgeZ,
+      stoneGeo,
+      stoneMat,
     );
+
     const forkBridge = buildSuspensionBridge(
       mainEdgeStart,
       branchEdgeStart,
@@ -718,34 +1024,47 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
       curve: forkBridge.curve,
     });
 
-    // Merge Return Suspension Bridge (Branch Island end -> Main merge commit!)
-    if (branch.mergeIntoSha) {
-      const mergePt = mainWaypoints.get(branch.mergeIntoSha);
-      if (mergePt) {
-        const branchEdgeEnd = new THREE.Vector3(
-          bCenter.x + bLength * 0.36,
-          bCenter.y + 0.04,
-          bCenter.z - zSide * (bWidth * 0.43),
-        );
-        const mainEdgeEnd = new THREE.Vector3(
-          mergePt.x,
-          0.04,
-          zSide * (mainWidth * 0.44),
-        );
-        const mergeBridge = buildSuspensionBridge(
-          branchEdgeEnd,
-          mainEdgeEnd,
-          animatedProps.lanternGlows,
-        );
-        worldGroup.add(mergeBridge.group);
-        bridges.push({
-          fromBranch: branch.name,
-          toBranch: mainBranch.name,
-          curve: mergeBridge.curve,
-        });
-      }
+    // Merge Return Suspension Bridge + Paved Entrance Spur (on Branch) + Paved Exit Spur (on Main)
+    if (plan.mainMergeX !== null && plan.branchMergeX !== null) {
+      const branchEdgeEnd = new THREE.Vector3(
+        plan.branchMergeX,
+        bCenter.y + 0.04,
+        branchInnerEdgeZ,
+      );
+      const mainEdgeEnd = new THREE.Vector3(plan.mainMergeX, 0.04, mainEdgeZ);
+
+      addBridgeApproachSpur(
+        bMesh,
+        bCenter,
+        bCurve,
+        plan.branchMergeX,
+        branchInnerEdgeZ,
+        stoneGeo,
+        stoneMat,
+      );
+      addBridgeApproachSpur(
+        mainMesh,
+        mainCenter,
+        mainCurve,
+        plan.mainMergeX,
+        mainEdgeZ,
+        stoneGeo,
+        stoneMat,
+      );
+
+      const mergeBridge = buildSuspensionBridge(
+        branchEdgeEnd,
+        mainEdgeEnd,
+        animatedProps.lanternGlows,
+      );
+      worldGroup.add(mergeBridge.group);
+      bridges.push({
+        fromBranch: branch.name,
+        toBranch: mainBranch.name,
+        curve: mergeBridge.curve,
+      });
     }
-  });
+  }
 
   // 3. Drifting Low-Poly Cloud Sea around and beneath the floating islands
   const cloudMat = new THREE.MeshStandardMaterial({

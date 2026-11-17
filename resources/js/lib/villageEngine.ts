@@ -1112,7 +1112,7 @@ export class VillageEngine {
     for (const isl of this.builtWorld.islands) {
       const dx = Math.abs(x - isl.center.x);
       const dz = Math.abs(z - isl.center.z);
-      if (dx <= isl.length * 0.48 && dz <= isl.width * 0.46) {
+      if (dx <= isl.length * 0.49 && dz <= isl.width * 0.48) {
         const deckY = isl.center.y + 0.03;
         const diff = Math.abs(deckY - currentY);
         if (diff < bestDiff) {
@@ -1126,7 +1126,7 @@ export class VillageEngine {
       const g = this.builtWorld.gate;
       const dx = Math.abs(x - g.dockCenter.x);
       const dz = Math.abs(z - g.dockCenter.z);
-      if (dx <= g.dockLength * 0.54 && dz <= g.dockWidth * 0.46) {
+      if (dx <= g.dockLength * 0.54 && dz <= g.dockWidth * 0.48) {
         const diff = Math.abs(0.05 - currentY);
         if (diff < bestDiff) {
           bestDiff = diff;
@@ -1136,13 +1136,13 @@ export class VillageEngine {
     }
 
     for (const br of this.builtWorld.bridges) {
-      const samples = 22;
+      const samples = 26;
       for (let i = 0; i <= samples; i++) {
         const pt = br.curve.getPointAt(i / samples);
         const distXZ = Math.hypot(x - pt.x, z - pt.z);
-        if (distXZ <= 0.88) {
+        if (distXZ <= 0.96) {
           const diff = Math.abs(pt.y - currentY);
-          if (diff < bestDiff + 0.8) {
+          if (diff < bestDiff + 0.85) {
             bestDiff = diff;
             bestY = pt.y + 0.05;
           }
