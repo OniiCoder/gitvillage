@@ -34,3 +34,4 @@ composer test
 | `GET /` | Main 3D Village (`?repo=owner/name` supported) |
 | `GET /gh/{owner}/{repo}` | Direct Inertia deep-link to any public GitHub repository |
 | `GET /api/local-*` | Local Git discovery & working-tree gate inspection (`APP_ENV=local` only) |
+# gitvillage
