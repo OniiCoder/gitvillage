@@ -8,6 +8,9 @@
         @if (filled(config('services.posthog.key')))
             <meta name="posthog-key" content="{{ config('services.posthog.key') }}" />
             <meta name="posthog-host" content="{{ config('services.posthog.host', 'https://us.i.posthog.com') }}" />
+            @if (config('services.posthog.capture_local'))
+                <meta name="posthog-capture-local" content="true" />
+            @endif
         @endif
         <title inertia>{{ config('app.name', 'GitVillage') }}</title>
         @viteReactRefresh

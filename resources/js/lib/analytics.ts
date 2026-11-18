@@ -74,6 +74,20 @@ export type AnalyticsEventMap = {
   };
 };
 
+/**
+ * Official hosted demo PostHog write-only project key (shared PostHog project with StepStake,
+ * isolated into its own GitVillage stream/dashboard via `app = "gitvillage"` + `gitvillage_*` events).
+ */
+const OFFICIAL_DEMO_HOSTS = new Set(['gitvillage.on-forge.com']);
+const OFFICIAL_DEMO_POSTHOG_KEY = 'phc_834eMtG9Xnu6ghem6HaHX4a5su2g2iCnbWsrV8Myi8t';
+const DEFAULT_POSTHOG_HOST = 'https://us.i.posthog.com';
+
+const GITVILLAGE_SUPER_PROPERTIES = {
+  app: 'gitvillage',
+  app_name: 'GitVillage',
+  dashboard_stream: 'gitvillage',
+} as const;
+
 let client: PostHog | null = null;
 let initialized = false;
 let enabled = false;
@@ -84,6 +98,18 @@ function readMetaContent(name: string): string {
   return document.querySelector<HTMLMetaElement>(`meta[name="${name}"]`)?.content?.trim() ?? '';
 }
 
+function isLocalDevHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '::1' ||
+    host.endsWith('.test') ||
+    host.endsWith('.local') ||
+    host.endsWith('.localhost')
+  );
+}
+
 function resolvePostHogConfig(): { key: string; host: string } | null {
   if (typeof window === 'undefined') return null;
 
@@ -92,17 +118,23 @@ function resolvePostHogConfig(): { key: string; host: string } | null {
     return null;
   }
 
-  const key =
-    readMetaContent('posthog-key') ||
-    (import.meta.env.VITE_POSTHOG_KEY as string | undefined)?.trim() ||
-    '';
+  const hostname = window.location.hostname;
+  const captureLocal = readMetaContent('posthog-capture-local') === 'true';
+  if (isLocalDevHostname(hostname) && !captureLocal) {
+    return null;
+  }
 
+  const metaKey = readMetaContent('posthog-key');
+  const envKey = (import.meta.env.VITE_POSTHOG_KEY as string | undefined)?.trim() ?? '';
+  const officialFallbackKey = OFFICIAL_DEMO_HOSTS.has(hostname) ? OFFICIAL_DEMO_POSTHOG_KEY : '';
+
+  const key = metaKey || envKey || officialFallbackKey;
   if (!key) return null;
 
   const host =
     readMetaContent('posthog-host') ||
     (import.meta.env.VITE_POSTHOG_HOST as string | undefined)?.trim() ||
-    'https://us.i.posthog.com';
+    DEFAULT_POSTHOG_HOST;
 
   return { key, host };
 }
@@ -127,7 +159,19 @@ export function initAnalytics(): void {
         session_recording: {
           maskAllInputs: true,
         },
+        before_send: (event) => {
+          if (!event) return null;
+          event.properties = {
+            ...event.properties,
+            ...GITVILLAGE_SUPER_PROPERTIES,
+          };
+          return event;
+        },
+        loaded: (ph) => {
+          ph.register(GITVILLAGE_SUPER_PROPERTIES);
+        },
       });
+      posthog.register(GITVILLAGE_SUPER_PROPERTIES);
       client = posthog;
 
       while (pendingEvents.length > 0) {
@@ -152,10 +196,16 @@ export function trackEvent<K extends keyof AnalyticsEventMap>(
   }
   if (!enabled) return;
 
+  const namespacedEvent = `gitvillage_${event}`;
+  const payload = {
+    ...GITVILLAGE_SUPER_PROPERTIES,
+    ...(properties as Record<string, unknown>),
+  };
+
   if (client) {
-    client.capture(event, properties as Record<string, unknown>);
+    client.capture(namespacedEvent, payload);
   } else if (pendingEvents.length < 40) {
-    pendingEvents.push({ event, properties: properties as Record<string, unknown> });
+    pendingEvents.push({ event: namespacedEvent, properties: payload });
   }
 }
 
