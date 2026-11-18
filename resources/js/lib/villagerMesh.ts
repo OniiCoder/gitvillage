@@ -125,6 +125,14 @@ export function buildContributorClanMap(
     if (existing) {
       existing.count++;
       if (!existing.avatar && c.authorAvatar) existing.avatar = c.authorAvatar;
+      if (
+        c.authorName &&
+        ((c.authorName.includes(' ') && !existing.name.includes(' ')) ||
+          (c.authorName[0] !== c.authorName[0]?.toLowerCase() &&
+            existing.name[0] === existing.name[0]?.toLowerCase()))
+      ) {
+        existing.name = c.authorName;
+      }
     } else {
       buckets.set(key, {
         login: c.authorLogin,

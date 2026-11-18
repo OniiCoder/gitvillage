@@ -52,9 +52,9 @@ class VillageController extends Controller
                 'subtitle' => 'Built-in showcase · 5 branch islands & bridges',
             ],
             [
-                'slug' => 'laravel/laravel',
-                'title' => 'laravel/laravel',
-                'subtitle' => 'The PHP framework for web artisans',
+                'slug' => 'laravel/framework',
+                'title' => 'laravel/framework',
+                'subtitle' => 'The Laravel PHP framework · core team & active branches',
             ],
             [
                 'slug' => 'inertiajs/inertia',

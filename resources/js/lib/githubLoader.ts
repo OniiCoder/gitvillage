@@ -125,6 +125,22 @@ function toCommitData(item: GhCommitItem, branchName: string): CommitData {
   };
 }
 
+function rankBranchCandidate(name: string, defaultBranch: string): number {
+  if (name === defaultBranch) return 2000;
+  const lower = name.toLowerCase();
+  if (/^(split-|copilot\/|dependabot\/|renovate\/)/.test(lower)) return -500;
+  if (lower === 'master' || lower === 'main' || lower === 'next' || lower === 'develop' || lower === 'canary') {
+    return 1000;
+  }
+  const relMatch = /^v?(\d+)\.(x|\d+)$/i.exec(name);
+  if (relMatch) {
+    const major = Number.parseInt(relMatch[1], 10);
+    // Prioritize modern major release branches (e.g. 13.x, 12.x, 11.x) over decade-old 4.0/5.0 branches
+    return major >= 10 ? 700 + major : 100 + major;
+  }
+  return 650;
+}
+
 export async function loadGitHubRepoVillage(
   owner: string,
   repo: string,
@@ -148,7 +164,7 @@ export async function loadGitHubRepoVillage(
       userSignal,
     ),
     ghFetch<GhBranchItem[]>(
-      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches?per_page=40`,
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches?per_page=100`,
       token,
       userSignal,
     ).catch(() => [] as GhBranchItem[]),
@@ -163,9 +179,9 @@ export async function loadGitHubRepoVillage(
     defaultCommits.push(c);
   }
 
-  // Pick up to 4 non-active branches whose tip SHA isn't already on activeBranch (prioritizing repo defaultBranch)
-  const sortedBranchCandidates = branchListRaw.toSorted((a, b) =>
-    a.name === defaultBranch ? -1 : b.name === defaultBranch ? 1 : 0,
+  // Pick up to 4 high-signal non-active branches whose tip SHA isn't already on activeBranch
+  const sortedBranchCandidates = branchListRaw.toSorted(
+    (a, b) => rankBranchCandidate(b.name, defaultBranch) - rankBranchCandidate(a.name, defaultBranch),
   );
   const extraBranches = sortedBranchCandidates
     .filter((b) => b.name !== activeBranch && !commitsBySha.has(b.commit.sha))
@@ -292,7 +308,7 @@ export async function loadGitHubRepoVillage(
     new Set([
       defaultBranch,
       activeBranch,
-      ...branchListRaw.map((b) => b.name),
+      ...sortedBranchCandidates.map((b) => b.name),
       ...branches.map((b) => b.name),
     ]),
   );

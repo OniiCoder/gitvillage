@@ -2369,8 +2369,9 @@ export class VillageEngine {
       applyAtmosphere: (m: TimeOfDay) => self.applyAtmosphere(m),
       setCameraMode: (m: CameraMode) => self.setCameraMode(m),
       triggerGatePreviewOpen: () => self.triggerGatePreviewOpen(),
-      loadLocalRepo: (p: string, u = true) => self.loadLocalRepo(p, u),
-      loadRepoBySpec: (s: string, u = true) => self.loadRepoBySpec(s, u),
+      loadLocalRepo: (p: string, u = true, b?: string) => self.loadLocalRepo(p, u, b),
+      loadRepoBySpec: (s: string, u = true, b?: string) => self.loadRepoBySpec(s, u, b),
+      switchBranch: (b: string) => self.switchBranch(b),
       getCargo: (v: VillagerEntity | CommitData) =>
         getCommitCargoMetrics('commit' in v ? v.commit : v),
       setActiveAuthor(key: string | null) {
