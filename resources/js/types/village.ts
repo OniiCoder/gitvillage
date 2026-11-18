@@ -94,9 +94,13 @@ export interface GateLayout {
 }
 
 export interface BridgeLayout {
+  kind: 'fork' | 'merge';
   fromBranch: string;
   toBranch: string;
   curve: THREE.CatmullRomCurve3;
+  traversalCurve: THREE.CatmullRomCurve3;
+  entryPathT: number;
+  exitPathT: number;
 }
 
 export type VillagerBehavior =
@@ -146,6 +150,8 @@ export interface VillagerEntity {
   emoteEmoji: string;
   emoteTimer: number;
   activeBridge?: {
+    bridge: BridgeLayout;
+    toIsland: IslandLayout;
     curve: THREE.CatmullRomCurve3;
     t: number;
     dir: 1 | -1;

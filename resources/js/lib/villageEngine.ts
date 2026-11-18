@@ -27,6 +27,7 @@ import {
 } from '@/lib/villagerMesh';
 import { type BuiltWorld, buildVillageWorld } from '@/lib/worldBuilder';
 import type {
+  BridgeLayout,
   CameraMode,
   CommitData,
   GateVisitorEntity,
@@ -95,6 +96,8 @@ export class VillageEngine {
   private activeBrowserSource: BrowserRepoSource | null = null;
   private lastLocalFingerprint = '';
   private builtWorld: BuiltWorld | null = null;
+  private islandByBranch = new Map<string, IslandLayout>();
+  private bridgeFreeAt = new Map<BridgeLayout, number>();
   private villagers: VillagerEntity[] = [];
   private villagerBySha = new Map<string, VillagerEntity>();
   private gateVisitors: GateVisitorEntity[] = [];
@@ -736,6 +739,8 @@ export class VillageEngine {
     }
     this.villagers = [];
     this.villagerBySha.clear();
+    this.islandByBranch.clear();
+    this.bridgeFreeAt.clear();
     this.gateVisitors = [];
     this.overlayLayer.replaceChildren();
     this.emoteElements.clear();
@@ -744,13 +749,12 @@ export class VillageEngine {
     this.builtWorld = buildVillageWorld(graph);
     this.scene.add(this.builtWorld.worldGroup);
 
-    const islandByBranch = new Map<string, IslandLayout>();
     for (const isl of this.builtWorld.islands) {
-      islandByBranch.set(isl.branch.name, isl);
+      this.islandByBranch.set(isl.branch.name, isl);
     }
 
     for (const branch of graph.branches) {
-      const isl = islandByBranch.get(branch.name);
+      const isl = this.islandByBranch.get(branch.name);
       if (!isl) continue;
       branch.commits.forEach((commit, idx) => {
         const clan = this.clanMap.get(normalizeAuthorKey(commit));
@@ -1158,13 +1162,127 @@ export class VillageEngine {
     for (const br of this.builtWorld.bridges) {
       const startPt = br.curve.getPointAt(0);
       const endPt = br.curve.getPointAt(1);
+      const entryJunc = br.traversalCurve.getPointAt(0);
+      const exitJunc = br.traversalCurve.getPointAt(1);
       if (
         Math.hypot(pos.x - startPt.x, pos.z - startPt.z) < 1.85 ||
-        Math.hypot(pos.x - endPt.x, pos.z - endPt.z) < 1.85
+        Math.hypot(pos.x - endPt.x, pos.z - endPt.z) < 1.85 ||
+        Math.hypot(pos.x - entryJunc.x, pos.z - entryJunc.z) < 1.35 ||
+        Math.hypot(pos.x - exitJunc.x, pos.z - exitJunc.z) < 1.35
       ) {
         return true;
       }
     }
+    return false;
+  }
+
+  private countIslandOccupancy(isl: IslandLayout): number {
+    let total = 0;
+    for (const v of this.villagers) {
+      if (v.activeBridge) {
+        if (v.activeBridge.toIsland === isl) total++;
+      } else if (v.island === isl) {
+        total++;
+      }
+    }
+    return total;
+  }
+
+  private tryEnterOneWayBridge(
+    v: VillagerEntity,
+    prevT: number,
+    nextT: number,
+    elapsed: number,
+  ): boolean {
+    if (!this.builtWorld || v === this.selectedVillager || v === this.hoveredVillager) {
+      return false;
+    }
+
+    const fromBranch = v.island.branch.name;
+    for (const br of this.builtWorld.bridges) {
+      // Strict Git directional rule:
+      // - Fork bridges (`main` -> `branch`) ONLY climb UP (`fromBranch === main`)
+      // - Merge bridges (`branch` -> `main`) ONLY descend DOWN (`fromBranch === branch`)
+      if (br.fromBranch !== fromBranch) continue;
+
+      const crossedEntry =
+        (prevT <= br.entryPathT && nextT >= br.entryPathT) ||
+        (prevT >= br.entryPathT && nextT <= br.entryPathT);
+      if (!crossedEntry) continue;
+
+      // Strict Zero-Traffic Rule 1: Cooldown & single-occupant reservation
+      if (elapsed < (this.bridgeFreeAt.get(br) ?? 0)) continue;
+      if (this.villagers.some((other) => other.activeBridge?.bridge === br)) continue;
+
+      const toIsland = this.islandByBranch.get(br.toBranch);
+      if (!toIsland) continue;
+
+      // Strict Zero-Traffic Rule 2: Balanced island populations (never empty or overcrowd an island)
+      const fromPop = this.countIslandOccupancy(v.island);
+      const minFromPop = v.island.branch.isDefault
+        ? Math.max(3, Math.floor(v.island.branch.commits.length * 0.45))
+        : Math.max(1, v.island.branch.commits.length - 1);
+      if (fromPop <= minFromPop) continue;
+
+      const toPop = this.countIslandOccupancy(toIsland);
+      const hasReturnMergeBridge = this.builtWorld.bridges.some(
+        (m) => m.kind === 'merge' && m.fromBranch === toIsland.branch.name,
+      );
+      const maxToPop = toIsland.branch.isDefault
+        ? Math.max(8, toIsland.branch.commits.length + 4)
+        : toIsland.branch.commits.length + (hasReturnMergeBridge ? 2 : 1);
+      if (toPop >= maxToPop) continue;
+
+      // Strict Zero-Traffic Rule 3: Exit junction must be clear & Walk-Mode player not on bridge
+      const exitPt = br.traversalCurve.getPointAt(1);
+      const exitBlocked = this.villagers.some(
+        (other) =>
+          other !== v &&
+          !other.activeBridge &&
+          other.island === toIsland &&
+          Math.hypot(other.root.position.x - exitPt.x, other.root.position.z - exitPt.z) < 1.35,
+      );
+      if (exitBlocked) continue;
+
+      if (this.cameraMode === 'walk') {
+        const ex = this.explorer.root.position;
+        const mid = br.curve.getPointAt(0.5);
+        if (Math.hypot(ex.x - mid.x, ex.z - mid.z) < 4.2) continue;
+      }
+
+      // Prefer commits affiliated with the branch/author, with organic probability
+      const isBranchAffiliate =
+        v.commit.branch === br.toBranch ||
+        (br.kind === 'merge' && v.commit.branch === br.fromBranch);
+      const chance = isBranchAffiliate ? 0.82 : 0.52;
+      if (Math.random() > chance) continue;
+
+      // Seamless C0 world-position projection onto the spur + bridge traversal curve!
+      const prevWorldX = v.root.position.x;
+      const prevWorldZ = v.root.position.z;
+      v.behavior = 'bridge_walk';
+      v.behaviorTimer = 30;
+      v.yieldTimer = 0;
+      v.activeBridge = {
+        bridge: br,
+        toIsland,
+        curve: br.traversalCurve,
+        t: 0.002,
+        dir: 1,
+      };
+      const newFrame = this.getVillagerCurveFrame(v);
+      v.lateralOffset = Math.max(
+        -newFrame.maxLat,
+        Math.min(
+          newFrame.maxLat,
+          (prevWorldX - newFrame.pt.x) * newFrame.nx +
+            (prevWorldZ - newFrame.pt.z) * newFrame.nz,
+        ),
+      );
+      this.syncVillagerWorldPosition(v);
+      return true;
+    }
+
     return false;
   }
 
@@ -1575,14 +1693,14 @@ export class VillageEngine {
       }
 
       v.behaviorTimer -= dt;
-      if (v.behaviorTimer <= 0) {
+      if (v.behaviorTimer <= 0 && v.behavior !== 'bridge_walk') {
         v.activeBridge = undefined;
         const nearBridgeHead = this.isNearAnyBridgeLanding(v.root.position);
         const roll = Math.random();
-        if (nearBridgeHead || roll < 0.54) {
+        if (nearBridgeHead || roll < 0.56) {
           v.behavior = 'stroll';
           v.behaviorTimer = 3.2 + Math.random() * 4.0;
-        } else if (roll < 0.79) {
+        } else if (roll < 0.8) {
           v.behavior = 'jump_joy';
           v.behaviorTimer = 2.0 + Math.random() * 2.2;
           const emotes = getRoleMeta(v.commit.kind).defaultEmotes;
@@ -1606,17 +1724,14 @@ export class VillageEngine {
 
       // Proactive Social Steering ("Make Way"): anticipate oncoming & stopped neighbors
       const frame = this.getVillagerCurveFrame(v);
-      const travelDir = v.behavior === 'bridge_walk' && v.activeBridge ? v.activeBridge.dir : v.pathDir;
+      const travelDir = v.behavior === 'bridge_walk' && v.activeBridge ? 1 : v.pathDir;
       const fwdX = frame.tx * travelDir;
       const fwdZ = frame.tz * travelDir;
-      let desiredLateral =
-        v.behavior === 'bridge_walk' && v.activeBridge
-          ? v.activeBridge.dir * 0.22
-          : v.baseLane;
-      let speedScale = v.yieldTimer > 0 ? 0.18 : 1.0;
+      let desiredLateral = v.behavior === 'bridge_walk' ? 0 : v.baseLane;
+      let speedScale = v.behavior === 'bridge_walk' ? 1.0 : v.yieldTimer > 0 ? 0.18 : 1.0;
       let politeLookPos: THREE.Vector3 | null = null;
 
-      if (!isHovered && (v.behavior === 'stroll' || v.behavior === 'bridge_walk')) {
+      if (!isHovered && v.behavior === 'stroll') {
         for (let j = 0; j < count; j++) {
           if (j === i) continue;
           const other = this.villagers[j];
@@ -1636,22 +1751,7 @@ export class VillageEngine {
             (other.root.position.z - frame.pt.z) * frame.nz;
           const latGap = Math.abs(otherLat - v.lateralOffset);
 
-          if (v.behavior === 'bridge_walk' && v.activeBridge) {
-            if (other.behavior === 'bridge_walk' && other.activeBridge?.curve === v.activeBridge.curve) {
-              if (other.activeBridge.dir !== v.activeBridge.dir) {
-                desiredLateral = v.activeBridge.dir * 0.38;
-                const shouldYield =
-                  v.burden < other.burden - 0.02 ||
-                  (Math.abs(v.burden - other.burden) <= 0.02 && i > j);
-                if (shouldYield && dist < 1.55) {
-                  speedScale = Math.min(speedScale, dist < 1.05 ? 0.05 : 0.38);
-                  politeLookPos = other.root.position;
-                }
-              } else if (dist < 1.35) {
-                speedScale = Math.min(speedScale, dist < 0.95 ? 0.0 : 0.45);
-              }
-            }
-          } else if (other.island === v.island) {
+          if (!other.activeBridge && other.island === v.island) {
             const passClearance = v.collisionRadius + other.collisionRadius + 0.22;
             if (latGap < passClearance) {
               const otherMovingOpposite =
@@ -1725,11 +1825,65 @@ export class VillageEngine {
       const prevX = v.root.position.x;
       const prevZ = v.root.position.z;
 
-      // Smoothly steer lateralOffset toward desired passing lane
-      const steerRate = v.behavior === 'stroll' || v.behavior === 'bridge_walk' ? 5.4 : 2.6;
+      // Smoothly steer lateralOffset toward desired passing lane (or centerline on stairs)
+      const steerRate = v.behavior === 'bridge_walk' ? 7.2 : v.behavior === 'stroll' ? 5.4 : 2.6;
       v.lateralOffset += (desiredLateral - v.lateralOffset) * Math.min(1, dt * steerRate);
 
-      if (isHovered) {
+      if (v.behavior === 'bridge_walk' && v.activeBridge) {
+        const br = v.activeBridge;
+        const curveLen = Math.max(5, br.curve.getLength());
+        const linearSpeed = 1.85 * (1 - v.burden * 0.16);
+        br.t += (linearSpeed / curveLen) * dt;
+
+        if (br.t >= 1) {
+          const prevEndWorldX = v.root.position.x;
+          const prevEndWorldZ = v.root.position.z;
+          v.island = br.toIsland;
+          v.pathT = Math.max(0.05, Math.min(0.95, br.bridge.exitPathT));
+          // Continue walking forward along chronological commit flow after climbing/merging!
+          v.pathDir = v.pathT > 0.84 ? -1 : 1;
+          this.bridgeFreeAt.set(br.bridge, elapsed + 5.2);
+          v.activeBridge = undefined;
+          v.behavior = 'stroll';
+          v.behaviorTimer = 3.8 + Math.random() * 3.0;
+
+          const destFrame = this.getVillagerCurveFrame(v);
+          v.lateralOffset = Math.max(
+            -destFrame.maxLat,
+            Math.min(
+              destFrame.maxLat,
+              (prevEndWorldX - destFrame.pt.x) * destFrame.nx +
+                (prevEndWorldZ - destFrame.pt.z) * destFrame.nz,
+            ),
+          );
+          this.syncVillagerWorldPosition(v);
+        } else {
+          this.syncVillagerWorldPosition(v);
+          const moveDx = v.root.position.x - prevX;
+          const moveDz = v.root.position.z - prevZ;
+          const moveDist = Math.hypot(moveDx, moveDz);
+
+          if (moveDist > 0.001) {
+            v.bodyGroup.rotation.y = this.rotateYawSmoothly(
+              v.bodyGroup.rotation.y,
+              Math.atan2(moveDx, moveDz),
+              dt * 10,
+            );
+          }
+
+          const slopeY = br.curve.getTangentAt(Math.min(1, br.t)).y;
+          const isClimbingUp = slopeY > 0.04;
+          const walkCycle = elapsed * (isClimbingUp ? 10.8 : 9.6) + v.phaseOffset;
+          const kneeAmp = isClimbingUp ? 0.74 : 0.58;
+          v.leftLeg.rotation.x = Math.sin(walkCycle) * kneeAmp;
+          v.rightLeg.rotation.x = -Math.sin(walkCycle) * kneeAmp;
+          v.leftArm.rotation.x = -Math.sin(walkCycle) * 0.52;
+          v.rightArm.rotation.x = isHovered
+            ? -2.2 + Math.sin(elapsed * 12) * 0.45
+            : Math.sin(walkCycle) * 0.52;
+          v.jumpY = Math.abs(Math.sin(walkCycle)) * (isClimbingUp ? 0.12 : 0.075);
+        }
+      } else if (isHovered) {
         this.syncVillagerWorldPosition(v);
         const dx = this.camera.position.x - v.root.position.x;
         const dz = this.camera.position.z - v.root.position.z;
@@ -1743,50 +1897,8 @@ export class VillageEngine {
         if (v.jumpY === 0 && Math.random() < dt * 2.2) {
           v.jumpVelocity = 4.6;
         }
-      } else if (v.behavior === 'bridge_walk' && v.activeBridge) {
-        const br = v.activeBridge;
-        br.t += br.dir * dt * 0.22 * speedScale;
-        if (br.t >= 1 || br.t <= 0) {
-          if (Math.random() < 0.5) {
-            br.dir = (br.dir * -1) as 1 | -1;
-            br.t = Math.max(0.01, Math.min(0.99, br.t));
-          } else {
-            v.activeBridge = undefined;
-            v.behavior = 'stroll';
-            v.behaviorTimer = 3.0;
-            this.syncVillagerWorldPosition(v);
-          }
-        } else {
-          this.syncVillagerWorldPosition(v);
-          const moveDx = v.root.position.x - prevX;
-          const moveDz = v.root.position.z - prevZ;
-          const moveSpeed = Math.hypot(moveDx, moveDz) / Math.max(0.001, dt);
-
-          if (moveSpeed > 0.12) {
-            v.bodyGroup.rotation.y = this.rotateYawSmoothly(
-              v.bodyGroup.rotation.y,
-              Math.atan2(moveDx, moveDz),
-              dt * 9,
-            );
-          } else if (politeLookPos) {
-            v.bodyGroup.rotation.y = this.rotateYawSmoothly(
-              v.bodyGroup.rotation.y,
-              Math.atan2(politeLookPos.x - v.root.position.x, politeLookPos.z - v.root.position.z),
-              dt * 7,
-            );
-          }
-
-          const strideAmp = Math.min(1, 0.2 + speedScale * 0.8);
-          const walkCycle = elapsed * 10 + v.phaseOffset;
-          v.leftLeg.rotation.x = Math.sin(walkCycle) * 0.65 * strideAmp;
-          v.rightLeg.rotation.x = -Math.sin(walkCycle) * 0.65 * strideAmp;
-          v.leftArm.rotation.x = -Math.sin(walkCycle) * 0.5 * strideAmp;
-          v.rightArm.rotation.x = Math.sin(walkCycle) * 0.5 * strideAmp;
-          if (speedScale > 0.25) {
-            v.jumpY = Math.abs(Math.sin(walkCycle)) * 0.09 * strideAmp;
-          }
-        }
       } else if (v.behavior === 'stroll') {
+        const prevPathT = v.pathT;
         v.pathT += v.pathDir * v.speed * speedScale * dt;
         if (v.pathT > 0.95) {
           v.pathT = 0.95;
@@ -1796,33 +1908,35 @@ export class VillageEngine {
           v.pathDir = 1;
         }
 
-        this.syncVillagerWorldPosition(v);
-        const moveDx = v.root.position.x - prevX;
-        const moveDz = v.root.position.z - prevZ;
-        const moveDist = Math.hypot(moveDx, moveDz);
+        if (!this.tryEnterOneWayBridge(v, prevPathT, v.pathT, elapsed)) {
+          this.syncVillagerWorldPosition(v);
+          const moveDx = v.root.position.x - prevX;
+          const moveDz = v.root.position.z - prevZ;
+          const moveDist = Math.hypot(moveDx, moveDz);
 
-        if (moveDist > 0.0025) {
-          v.bodyGroup.rotation.y = this.rotateYawSmoothly(
-            v.bodyGroup.rotation.y,
-            Math.atan2(moveDx, moveDz),
-            dt * 8.5,
-          );
-        } else if (politeLookPos) {
-          v.bodyGroup.rotation.y = this.rotateYawSmoothly(
-            v.bodyGroup.rotation.y,
-            Math.atan2(politeLookPos.x - v.root.position.x, politeLookPos.z - v.root.position.z),
-            dt * 7,
-          );
-        }
+          if (moveDist > 0.0025) {
+            v.bodyGroup.rotation.y = this.rotateYawSmoothly(
+              v.bodyGroup.rotation.y,
+              Math.atan2(moveDx, moveDz),
+              dt * 8.5,
+            );
+          } else if (politeLookPos) {
+            v.bodyGroup.rotation.y = this.rotateYawSmoothly(
+              v.bodyGroup.rotation.y,
+              Math.atan2(politeLookPos.x - v.root.position.x, politeLookPos.z - v.root.position.z),
+              dt * 7,
+            );
+          }
 
-        const strideAmp = Math.min(1, 0.18 + speedScale * 0.82);
-        const cycle = elapsed * 8.5 + v.phaseOffset;
-        v.leftLeg.rotation.x = Math.sin(cycle) * 0.6 * strideAmp;
-        v.rightLeg.rotation.x = -Math.sin(cycle) * 0.6 * strideAmp;
-        v.leftArm.rotation.x = -Math.sin(cycle) * 0.45 * strideAmp;
-        v.rightArm.rotation.x = Math.sin(cycle) * 0.45 * strideAmp;
-        if (v.jumpY === 0) {
-          v.bodyGroup.position.y = Math.abs(Math.sin(cycle)) * 0.11 * strideAmp;
+          const strideAmp = Math.min(1, 0.18 + speedScale * 0.82);
+          const cycle = elapsed * 8.5 + v.phaseOffset;
+          v.leftLeg.rotation.x = Math.sin(cycle) * 0.6 * strideAmp;
+          v.rightLeg.rotation.x = -Math.sin(cycle) * 0.6 * strideAmp;
+          v.leftArm.rotation.x = -Math.sin(cycle) * 0.45 * strideAmp;
+          v.rightArm.rotation.x = Math.sin(cycle) * 0.45 * strideAmp;
+          if (v.jumpY === 0) {
+            v.bodyGroup.position.y = Math.abs(Math.sin(cycle)) * 0.11 * strideAmp;
+          }
         }
       } else if (v.behavior === 'jump_joy') {
         this.syncVillagerWorldPosition(v);
@@ -1922,9 +2036,19 @@ export class VillageEngine {
 
           const overlap = minSep - dist;
 
-          // Weight separation by inverse mass (heavy-cargo & hovered villagers hold more ground!)
-          const massA = a === this.hoveredVillager ? 4.5 : 1 + a.burden * 1.35;
-          const massB = b === this.hoveredVillager ? 4.5 : 1 + b.burden * 1.35;
+          // Weight separation by inverse mass (bridge crossers, heavy-cargo & hovered villagers hold right-of-way!)
+          const massA =
+            a === this.hoveredVillager
+              ? 4.5
+              : a.behavior === 'bridge_walk'
+                ? 4.0
+                : 1 + a.burden * 1.35;
+          const massB =
+            b === this.hoveredVillager
+              ? 4.5
+              : b.behavior === 'bridge_walk'
+                ? 4.0
+                : 1 + b.burden * 1.35;
           const invA = 1 / massA;
           const invB = 1 / massB;
           const invSum = invA + invB;

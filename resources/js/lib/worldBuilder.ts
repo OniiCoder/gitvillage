@@ -460,17 +460,20 @@ function addBridgeApproachSpur(
   edgeWorldZ: number,
   stoneGeo: THREE.BufferGeometry,
   stoneMat: THREE.Material,
-): void {
+): { spinePt: THREE.Vector3; spineT: number } {
   // Find closest point along the island's main cobblestone spine to connect cleanly
   let bestPt = spineCurve.getPointAt(0.5);
+  let bestT = 0.5;
   let bestDx = Infinity;
-  const samples = 40;
+  const samples = 48;
   for (let i = 0; i <= samples; i++) {
-    const pt = spineCurve.getPointAt(i / samples);
+    const tSample = i / samples;
+    const pt = spineCurve.getPointAt(tSample);
     const dx = Math.abs(pt.x - anchorWorldX);
     if (dx < bestDx) {
       bestDx = dx;
       bestPt = pt;
+      bestT = tSample;
     }
   }
 
@@ -510,6 +513,26 @@ function addBridgeApproachSpur(
     bollard.castShadow = true;
     islandMesh.add(bollard);
   }
+
+  return { spinePt: bestPt.clone(), spineT: bestT };
+}
+
+function buildBridgeTraversalCurve(
+  entrySpinePt: THREE.Vector3,
+  bridgeCurve: THREE.CatmullRomCurve3,
+  exitSpinePt: THREE.Vector3,
+): THREE.CatmullRomCurve3 {
+  const bStart = bridgeCurve.getPointAt(0);
+  const bEnd = bridgeCurve.getPointAt(1);
+  const entryMid = entrySpinePt.clone().lerp(bStart, 0.52);
+  const exitMid = bEnd.clone().lerp(exitSpinePt, 0.48);
+  return new THREE.CatmullRomCurve3([
+    entrySpinePt.clone(),
+    entryMid,
+    ...bridgeCurve.points.map((p) => p.clone()),
+    exitMid,
+    exitSpinePt.clone(),
+  ]);
 }
 
 interface PlannedSideBranch {
@@ -989,11 +1012,11 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
     const mainEdgeZ = zSide * (mainWidth * 0.45);
     const branchInnerEdgeZ = bCenter.z - zSide * (bWidth * 0.44);
 
-    // Fork Suspension Bridge + Paved Entrance Spur (on Main) + Paved Exit Spur (on Branch)
+    // Fork Suspension Bridge (UP: Main -> Branch) + Paved Entrance & Exit Spurs
     const mainEdgeStart = new THREE.Vector3(plan.mainForkX, 0.04, mainEdgeZ);
     const branchEdgeStart = new THREE.Vector3(plan.branchForkX, bCenter.y + 0.04, branchInnerEdgeZ);
 
-    addBridgeApproachSpur(
+    const forkEntrySpur = addBridgeApproachSpur(
       mainMesh,
       mainCenter,
       mainCurve,
@@ -1002,7 +1025,7 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
       stoneGeo,
       stoneMat,
     );
-    addBridgeApproachSpur(
+    const forkExitSpur = addBridgeApproachSpur(
       bMesh,
       bCenter,
       bCurve,
@@ -1019,12 +1042,20 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
     );
     worldGroup.add(forkBridge.group);
     bridges.push({
+      kind: 'fork',
       fromBranch: mainBranch.name,
       toBranch: branch.name,
       curve: forkBridge.curve,
+      traversalCurve: buildBridgeTraversalCurve(
+        forkEntrySpur.spinePt,
+        forkBridge.curve,
+        forkExitSpur.spinePt,
+      ),
+      entryPathT: forkEntrySpur.spineT,
+      exitPathT: forkExitSpur.spineT,
     });
 
-    // Merge Return Suspension Bridge + Paved Entrance Spur (on Branch) + Paved Exit Spur (on Main)
+    // Merge Return Suspension Bridge (DOWN: Branch -> Main) + Paved Entrance & Exit Spurs
     if (plan.mainMergeX !== null && plan.branchMergeX !== null) {
       const branchEdgeEnd = new THREE.Vector3(
         plan.branchMergeX,
@@ -1033,7 +1064,7 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
       );
       const mainEdgeEnd = new THREE.Vector3(plan.mainMergeX, 0.04, mainEdgeZ);
 
-      addBridgeApproachSpur(
+      const mergeEntrySpur = addBridgeApproachSpur(
         bMesh,
         bCenter,
         bCurve,
@@ -1042,7 +1073,7 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
         stoneGeo,
         stoneMat,
       );
-      addBridgeApproachSpur(
+      const mergeExitSpur = addBridgeApproachSpur(
         mainMesh,
         mainCenter,
         mainCurve,
@@ -1059,9 +1090,17 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
       );
       worldGroup.add(mergeBridge.group);
       bridges.push({
+        kind: 'merge',
         fromBranch: branch.name,
         toBranch: mainBranch.name,
         curve: mergeBridge.curve,
+        traversalCurve: buildBridgeTraversalCurve(
+          mergeEntrySpur.spinePt,
+          mergeBridge.curve,
+          mergeExitSpur.spinePt,
+        ),
+        entryPathT: mergeEntrySpur.spineT,
+        exitPathT: mergeExitSpur.spineT,
       });
     }
   }
