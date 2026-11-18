@@ -134,6 +134,7 @@ export function PresetsPopover({
         <div className="disclosure-body">
           <input
             id="gh-token-input"
+            className="ph-no-capture"
             type="password"
             value={githubToken}
             onChange={(e) => onGithubTokenChange(e.target.value)}

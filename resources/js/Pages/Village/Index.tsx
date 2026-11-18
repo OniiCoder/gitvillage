@@ -9,6 +9,7 @@ import { extractDroppedRepoSource, LocalRepoDialog } from '@/Components/LocalRep
 import { PresetsPopover } from '@/Components/PresetsPopover';
 import { SfIconSprite } from '@/Components/SfIconSprite';
 import { SpatialTopbar } from '@/Components/SpatialTopbar';
+import { describeRepoForAnalytics, trackEvent } from '@/lib/analytics';
 import { createDemoRepoGraph } from '@/lib/demoRepo';
 import { sound } from '@/lib/sound';
 import { VillageEngine, type VillageEngineSnapshot } from '@/lib/villageEngine';
@@ -79,12 +80,13 @@ export default function VillageIndex({
 
   const openLocalModal = useCallback(() => {
     sound.playPop(523.25);
+    trackEvent('local_modal_opened', { local_server_enabled: localServerEnabled });
     const dialog = localDialogRef.current as
       | (HTMLDialogElement & { __refreshPicker?: (p?: string) => void })
       | null;
     dialog?.showModal();
     dialog?.__refreshPicker?.(snapshot.graph.localPath);
-  }, [snapshot.graph.localPath]);
+  }, [localServerEnabled, snapshot.graph.localPath]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -193,6 +195,10 @@ export default function VillageIndex({
     try {
       await navigator.clipboard.writeText(shareUrl.toString());
       sound.playPop(660);
+      trackEvent('village_shared', {
+        ...describeRepoForAnalytics(g),
+        branch: g.currentBranch ?? g.defaultBranch,
+      });
       showToast(
         g.isLocal
           ? 'Shareable village link copied (loads showcase for friends)'
@@ -203,11 +209,27 @@ export default function VillageIndex({
     }
   };
 
-  const openDiffModal = useCallback((filename?: string) => {
-    sound.playPop(587.33);
-    setDiffSelectedFilename(filename ?? null);
-    diffDialogRef.current?.showModal();
-  }, []);
+  const openDiffModal = useCallback(
+    (filename?: string) => {
+      sound.playPop(587.33);
+      const sel = snapshot.selection;
+      if (sel) {
+        trackEvent('full_diff_modal_opened', {
+          ...describeRepoForAnalytics(snapshot.graph),
+          mode:
+            sel.kind === 'visitor'
+              ? 'gate_visitor'
+              : filename === '__all__'
+                ? 'all_files'
+                : 'single_file',
+          files_count: sel.kind === 'commit' ? (sel.commit.files?.length ?? 0) : 1,
+        });
+      }
+      setDiffSelectedFilename(filename ?? null);
+      diffDialogRef.current?.showModal();
+    },
+    [snapshot.graph, snapshot.selection],
+  );
 
   const diffModalPayload: DiffModalPayload | null = (() => {
     const sel = snapshot.selection;

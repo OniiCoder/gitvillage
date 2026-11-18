@@ -1,8 +1,10 @@
 import { createInertiaApp } from '@inertiajs/react';
 import { createRoot } from 'react-dom/client';
+import { initAnalytics } from '@/lib/analytics';
 
 // Feature-detected progressive enhancement polyfills per modern-web-guidance
 if (typeof window !== 'undefined') {
+  initAnalytics();
   if (!Object.hasOwn(HTMLElement.prototype, 'popover')) {
     import('@oddbird/popover-polyfill');
   }

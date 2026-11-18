@@ -35,4 +35,9 @@ return [
         ],
     ],
 
+    'posthog' => [
+        'key' => env('POSTHOG_KEY', env('VITE_POSTHOG_KEY')),
+        'host' => env('POSTHOG_HOST', env('VITE_POSTHOG_HOST', 'https://us.i.posthog.com')),
+    ],
+
 ];

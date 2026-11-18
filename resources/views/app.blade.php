@@ -5,6 +5,10 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <meta name="text-scale" content="scale" />
         <meta name="csrf-token" content="{{ csrf_token() }}" />
+        @if (filled(config('services.posthog.key')))
+            <meta name="posthog-key" content="{{ config('services.posthog.key') }}" />
+            <meta name="posthog-host" content="{{ config('services.posthog.host', 'https://us.i.posthog.com') }}" />
+        @endif
         <title inertia>{{ config('app.name', 'GitVillage') }}</title>
         @viteReactRefresh
         @vite(['resources/css/app.css', 'resources/js/app.tsx'])

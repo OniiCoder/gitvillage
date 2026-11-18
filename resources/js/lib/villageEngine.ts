@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { describeRepoForAnalytics, trackEvent } from '@/lib/analytics';
 import {
   type BrowserRepoSource,
   loadBrowserGitRepoVillage,
@@ -359,10 +360,12 @@ export class VillageEngine {
     const next = order[(order.indexOf(this.timeOfDay) + 1) % order.length];
     this.applyAtmosphere(next);
     sound.playPop(523.25);
+    trackEvent('atmosphere_changed', { time_of_day: next });
   }
 
   public toggleMute(): void {
     sound.toggleMute();
+    trackEvent('audio_mute_toggled', { muted: sound.muted });
     this.emit();
   }
 
@@ -396,12 +399,18 @@ export class VillageEngine {
   }
 
   public toggleWalkMode(): void {
-    this.setCameraMode(this.cameraMode === 'orbit' ? 'walk' : 'orbit');
+    const nextMode = this.cameraMode === 'orbit' ? 'walk' : 'orbit';
+    this.setCameraMode(nextMode);
+    trackEvent('camera_mode_changed', {
+      mode: nextMode,
+      ...describeRepoForAnalytics(this.activeGraph),
+    });
   }
 
   public setFilter(filter: string): void {
     this.activeFilter = filter;
     this.applyVillagerFilterBeams();
+    trackEvent('filter_changed', { filter });
     this.emit();
   }
 
@@ -410,6 +419,10 @@ export class VillageEngine {
     this.activeAuthorKey = this.activeAuthorKey === authorKey ? null : authorKey;
     sound.playPop(this.activeAuthorKey ? 587.33 : 440);
     this.applyVillagerFilterBeams();
+    trackEvent('author_spotlight_toggled', {
+      active: this.activeAuthorKey !== null,
+      ...describeRepoForAnalytics(this.activeGraph),
+    });
     if (this.activeAuthorKey && clan) {
       this.cb.onToast(
         `${clan.emblem} ${clan.authorName} — ${clan.earLabel} · ${clan.commitCount} commit${clan.commitCount === 1 ? '' : 's'} highlighted`,
@@ -554,6 +567,12 @@ export class VillageEngine {
     const target = branchName.trim();
     if (!target) return;
 
+    trackEvent('branch_switched', {
+      ...describeRepoForAnalytics(this.activeGraph),
+      branch: this.activeGraph.isLocal ? 'local_branch' : target,
+      checkout_git_head: Boolean(options.checkoutGitHead),
+    });
+
     if (this.activeGraph.isDemo) {
       const flew = this.flyToBranchIsland(target);
       if (flew) {
@@ -642,6 +661,12 @@ export class VillageEngine {
     this.selectedGateVisitor = null;
     if (playChime) {
       sound.playSelectVillager(v.commit.kind);
+      trackEvent('commit_inspected', {
+        ...describeRepoForAnalytics(this.activeGraph),
+        commit_kind: v.commit.kind,
+        branch: this.activeGraph.isLocal ? 'local_branch' : v.commit.branch,
+        files_count: v.commit.files?.length ?? 0,
+      });
     }
 
     v.behavior = 'jump_joy';
@@ -699,6 +724,10 @@ export class VillageEngine {
 
     if (playChime) {
       sound.playSelectVillager(gv.file.staged ? 'feat' : 'fix');
+      trackEvent('gate_visitor_inspected', {
+        status: gv.file.status,
+        staged: gv.file.staged,
+      });
     }
 
     gv.jumpVelocity = 7.0;
@@ -838,6 +867,15 @@ export class VillageEngine {
       });
       sound.playRepoLoaded();
       this.cb.onSyncUrl({ repo: null, local: null, branch: null });
+      trackEvent('repo_loaded', {
+        source: 'local_browser',
+        repo_type: 'local',
+        repo_slug: 'local_repo',
+        branch: 'local_branch',
+        commit_count: this.villagers.length,
+        branch_count: graph.branches.length,
+        gate_visitors_count: waitingCount,
+      });
 
       if (targetBranch) {
         this.cb.onToast(
@@ -856,6 +894,10 @@ export class VillageEngine {
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'Could not parse local Git repository folder.';
+      trackEvent('repo_load_failed', {
+        source: 'local_browser',
+        error_type: message.slice(0, 80),
+      });
       this.cb.onToast(message, true, 6500);
     } finally {
       this.isLoading = false;
@@ -892,6 +934,15 @@ export class VillageEngine {
         focusGateOnLoad: !targetBranch && waitingCount > 0,
       });
       sound.playRepoLoaded();
+      trackEvent('repo_loaded', {
+        source: 'local_server',
+        repo_type: 'local',
+        repo_slug: 'local_repo',
+        branch: 'local_branch',
+        commit_count: this.villagers.length,
+        branch_count: graph.branches.length,
+        gate_visitors_count: waitingCount,
+      });
 
       if (updateUrl) {
         const customBranch =
@@ -922,6 +973,10 @@ export class VillageEngine {
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       const message = err instanceof Error ? err.message : 'Could not load local git repository.';
+      trackEvent('repo_load_failed', {
+        source: 'local_server',
+        error_type: message.slice(0, 80),
+      });
       this.cb.onToast(message, true, 6000);
     } finally {
       this.isLoading = false;
@@ -1005,6 +1060,15 @@ export class VillageEngine {
         this.flyToBranchIsland(targetBranch);
       }
       sound.playRepoLoaded();
+      trackEvent('repo_loaded', {
+        source: 'showcase',
+        repo_type: 'demo',
+        repo_slug: 'gitvillage/sky-village',
+        branch: targetBranch ?? demo.defaultBranch,
+        commit_count: this.villagers.length,
+        branch_count: demo.branches.length,
+        gate_visitors_count: 0,
+      });
       if (updateUrl) {
         this.cb.onSyncUrl({
           repo: null,
@@ -1048,6 +1112,15 @@ export class VillageEngine {
       );
       this.rebuildVillageFromGraph(graph);
       sound.playRepoLoaded();
+      trackEvent('repo_loaded', {
+        source: 'github',
+        repo_type: 'github',
+        repo_slug: `${graph.owner}/${graph.repo}`,
+        branch: graph.currentBranch ?? graph.defaultBranch,
+        commit_count: this.villagers.length,
+        branch_count: graph.branches.length,
+        gate_visitors_count: 0,
+      });
 
       if (updateUrl) {
         this.cb.onSyncUrl({
@@ -1081,6 +1154,11 @@ export class VillageEngine {
     } catch (err) {
       if (err instanceof DOMException && err.name === 'AbortError') return;
       const message = err instanceof Error ? err.message : 'Could not load repository.';
+      trackEvent('repo_load_failed', {
+        source: 'github',
+        repo_slug: `${parsed.owner}/${parsed.repo}`,
+        error_type: message.slice(0, 80),
+      });
       this.cb.onToast(message, true, 6000);
     } finally {
       this.isLoading = false;

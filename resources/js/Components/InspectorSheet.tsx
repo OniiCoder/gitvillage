@@ -2,6 +2,11 @@ import { useEffect, useState } from 'react';
 import { DiffCodeBlock } from '@/Components/DiffCodeBlock';
 import { getFileStatusBadge } from '@/Components/DiffViewerDialog';
 import { SfIcon } from '@/Components/SfIconSprite';
+import {
+  describeRepoForAnalytics,
+  extractFileExtension,
+  trackEvent,
+} from '@/lib/analytics';
 import { sound } from '@/lib/sound';
 import {
   type ContributorClanProfile,
@@ -472,6 +477,13 @@ export function InspectorSheet({
                     className="apple-disclosure file-diff-item"
                     onToggle={(e) => {
                       sound.playPop(e.currentTarget.open ? 610 : 470);
+                      if (e.currentTarget.open) {
+                        trackEvent('file_diff_expanded', {
+                          ...describeRepoForAnalytics(graph),
+                          file_ext: extractFileExtension(file.filename),
+                          status: file.status,
+                        });
+                      }
                     }}
                   >
                     <summary className="file-diff-summary">

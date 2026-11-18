@@ -87,4 +87,23 @@ class VillagePageTest extends TestCase
             ->postJson('/api/local-checkout', ['path' => '.', 'branch' => 'non-existent-branch-xyz'])
             ->assertNotFound();
     }
+
+    public function test_posthog_meta_tags_render_only_when_configured(): void
+    {
+        config(['services.posthog.key' => null]);
+
+        $this->get('/')
+            ->assertOk()
+            ->assertDontSee('name="posthog-key"', false);
+
+        config([
+            'services.posthog.key' => 'phc_test_village_key',
+            'services.posthog.host' => 'https://eu.i.posthog.com',
+        ]);
+
+        $this->get('/')
+            ->assertOk()
+            ->assertSee('<meta name="posthog-key" content="phc_test_village_key" />', false)
+            ->assertSee('<meta name="posthog-host" content="https://eu.i.posthog.com" />', false);
+    }
 }
