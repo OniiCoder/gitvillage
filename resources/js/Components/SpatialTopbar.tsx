@@ -213,6 +213,7 @@ export function SpatialTopbar({
             type="button"
             id="local-quick-btn"
             className="tb-btn"
+            aria-label="Local… Choose a local Git repository"
             title="Choose a local Git repository"
             onClick={onOpenLocalModal}
           >
@@ -222,6 +223,7 @@ export function SpatialTopbar({
           <button
             type="button"
             className="tb-btn"
+            aria-label="Presets — browse showcase and local repositories"
             title="Browse showcase and local repositories"
             {...({
               commandfor: 'presets-popover',
@@ -234,6 +236,7 @@ export function SpatialTopbar({
           <button
             type="button"
             className="tb-btn"
+            aria-label="Census — view commit census"
             title="View commit census"
             {...({
               commandfor: 'roster-popover',
@@ -253,6 +256,7 @@ export function SpatialTopbar({
             id="mode-btn"
             className="tb-btn"
             aria-pressed={cameraMode === 'walk'}
+            aria-label="Walk — toggle third-person Walk Mode"
             title="Toggle third-person Walk Mode (WASD)"
             onClick={onToggleWalkMode}
           >

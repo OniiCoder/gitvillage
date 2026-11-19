@@ -91,7 +91,9 @@
     padding: 0;
     width: 100%;
     height: 100%;
+    height: 100dvh;
     overflow: hidden;
+    overflow-wrap: break-word;
     background: #0d1117;
     color: var(--ink-primary);
     font-family: var(--font-sans);
@@ -99,6 +101,22 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     user-select: none;
+  }
+
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  p,
+  li {
+    text-wrap: pretty;
+  }
+
+  img,
+  video {
+    max-inline-size: 100%;
+    block-size: auto;
   }
 
   button,
@@ -228,7 +246,7 @@
   /* Floating Spatial Top Ornament Bar (visionOS / macOS Safari Compact Bar) */
   .spatial-topbar {
     position: fixed;
-    top: 0.75rem;
+    top: max(0.75rem, env(safe-area-inset-top, 0px));
     left: 50%;
     transform: translateX(-50%);
     width: fit-content;
@@ -747,7 +765,7 @@
   /* Bottom Floating Segmented Ornament */
   .bottom-dock {
     position: fixed;
-    bottom: 0.9rem;
+    bottom: max(0.9rem, env(safe-area-inset-bottom, 0px));
     left: 50%;
     transform: translateX(-50%);
     display: flex;
@@ -768,6 +786,7 @@
     display: flex;
     align-items: center;
     gap: 0.18rem;
+    min-inline-size: 0;
   }
 
   .filter-pill,
@@ -816,8 +835,8 @@
   /* Bottom-Left Spatial Creator Attribution Ornament */
   .creator-badge {
     position: fixed;
-    bottom: 0.95rem;
-    left: 1rem;
+    bottom: max(0.95rem, env(safe-area-inset-bottom, 0px));
+    left: max(1rem, env(safe-area-inset-left, 0px));
     z-index: 9;
     display: flex;
     align-items: center;
@@ -1181,7 +1200,7 @@
 
   .ins-actions-bar {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0.38rem;
     margin-block-end: 0.75rem;
   }
@@ -1825,9 +1844,10 @@
 
   .section-heading-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
     justify-content: space-between;
-    gap: 0.5rem;
+    gap: 0.2rem 0.5rem;
     margin-block-end: 0.55rem;
   }
 
@@ -1853,9 +1873,10 @@
 
   .sheet-header-bar {
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-start;
     justify-content: space-between;
-    gap: 0.75rem;
+    gap: 0.55rem 0.75rem;
     margin-block-end: 0.95rem;
   }
 
@@ -2014,10 +2035,16 @@
     display: inline-flex;
     align-items: center;
     gap: 0.48rem;
+    min-inline-size: 0;
     overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
     flex: 1;
+  }
+
+  .roster-row-subj > span:last-child {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .roster-row-sha {
@@ -2025,6 +2052,8 @@
     font-size: 0.72rem;
     color: var(--ink-tertiary);
     font-variant-numeric: tabular-nums;
+    flex: none;
+    white-space: nowrap;
   }
 
   /* Local Repository Chooser Sheet & Finder Breadcrumbs */
@@ -2464,9 +2493,10 @@
     /* Scalable em-based Responsive Reflow */
   .browser-dropzone {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: 1rem;
+    gap: 0.75rem 1rem;
     padding: 0.875rem 1rem;
     margin-bottom: 0.75rem;
     border-radius: var(--radius-group);
@@ -2520,6 +2550,15 @@
     min-height: 0;
   }
 
+  @media (pointer: coarse) {
+    .repo-form input,
+    .branch-search-wrap input,
+    .token-details input,
+    .spotlight-input-wrap input {
+      font-size: 1rem;
+    }
+  }
+
   @media (max-width: 68em) {
     .stats-pill {
       display: none;
@@ -2528,12 +2567,13 @@
       inline-size: 14rem;
     }
     .bottom-dock {
-      bottom: 3.35rem;
+      bottom: calc(3.25rem + env(safe-area-inset-bottom, 0px));
     }
     .creator-badge {
-      bottom: 0.75rem;
+      bottom: max(0.6rem, env(safe-area-inset-bottom, 0px));
       left: 50%;
       transform: translateX(-50%);
+      max-inline-size: calc(100vw - 1.5rem);
     }
   }
 
@@ -2542,37 +2582,237 @@
     .ornament-divider {
       display: none;
     }
+
     .spatial-topbar {
-      flex-wrap: wrap;
-      justify-content: center;
+      top: max(0.5rem, env(safe-area-inset-top, 0px));
+      inline-size: min(34rem, calc(100vw - 1rem));
+      max-inline-size: calc(100vw - 1rem);
+      flex-direction: column;
+      align-items: stretch;
+      justify-content: flex-start;
+      gap: 0.38rem;
       border-radius: 1.25rem;
-      padding: 0.4rem 0.55rem;
+      padding: 0.48rem 0.55rem;
     }
+
+    .brand-cluster {
+      width: 100%;
+      justify-content: space-between;
+      padding-inline-end: 0;
+      gap: 0.42rem;
+    }
+
+    .brand-meta {
+      flex: 1;
+      min-inline-size: 0;
+      gap: 0.4rem;
+    }
+
+    .branch-pill-btn {
+      flex: 0 1 auto;
+      max-inline-size: 9.5rem;
+      min-inline-size: 0;
+    }
+
+    .contributor-stack {
+      margin-inline-start: auto;
+    }
+
     .repo-form {
-      flex: 1 1 12rem;
+      flex: none;
+      inline-size: 100%;
+      min-inline-size: 0;
+      max-inline-size: none;
+      min-block-size: 2.35rem;
     }
+
+    .toolbar-actions {
+      inline-size: 100%;
+      min-inline-size: 0;
+      justify-content: safe center;
+      overflow-x: auto;
+      scrollbar-width: none;
+      scroll-snap-type: x proximity;
+      padding: 2px;
+    }
+
+    .toolbar-actions::-webkit-scrollbar {
+      display: none;
+    }
+
+    .toast-banner {
+      top: calc(8.9rem + env(safe-area-inset-top, 0px));
+      max-inline-size: calc(100vw - 1.25rem);
+    }
+
+    .hud-popover,
+    .branch-popover {
+      inset: 0;
+      position-area: none;
+      margin: calc(8.9rem + env(safe-area-inset-top, 0px)) auto auto;
+      inline-size: min(34rem, calc(100vw - 1rem));
+      max-block-size: calc(100dvh - 10.2rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+      padding: 0.95rem;
+    }
+
     .bottom-dock {
-      flex-wrap: wrap;
-      justify-content: center;
+      bottom: calc(3rem + env(safe-area-inset-bottom, 0px));
+      inline-size: min(34rem, calc(100vw - 1rem));
+      max-inline-size: calc(100vw - 1rem);
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.26rem;
       border-radius: 1.25rem;
-      padding: 0.38rem 0.5rem;
+      padding: 0.38rem 0.45rem;
     }
+
+    .dock-segments {
+      inline-size: 100%;
+      min-inline-size: 0;
+      overflow-x: auto;
+      scrollbar-width: none;
+      scroll-snap-type: x proximity;
+      justify-content: safe center;
+      gap: 0.14rem;
+      padding: 2px;
+    }
+
+    .dock-segments::-webkit-scrollbar {
+      display: none;
+    }
+
+    .dock-quick-actions {
+      inline-size: 100%;
+      min-inline-size: 0;
+      justify-content: safe center;
+      gap: 0.35rem;
+      padding-block-start: 0.22rem;
+      border-block-start: 0.5px solid var(--hairline-subtle);
+    }
+
     .inspector-card {
       top: auto;
-      bottom: 7.4rem;
-      right: 0.75rem;
-      left: 0.75rem;
+      bottom: calc(8.35rem + env(safe-area-inset-bottom, 0px));
+      right: 0.5rem;
+      left: 0.5rem;
       inline-size: auto;
-      max-block-size: 44vh;
+      max-block-size: min(46dvh, calc(100dvh - 17.6rem));
+      padding: 0.9rem;
     }
+
+    .diff-viewer-dialog {
+      inline-size: calc(100vw - 1rem);
+      block-size: calc(100dvh - 1.5rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+      max-block-size: calc(100dvh - 1.5rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    }
+
     .diff-dialog-body {
       flex-direction: column;
     }
+
     .diff-sidebar {
       inline-size: 100%;
-      max-block-size: 9.5rem;
+      max-block-size: 8.75rem;
       border-inline-end: none;
       border-block-end: 0.5px solid var(--hairline-border);
+    }
+
+    .local-picker-dialog,
+    .guide-dialog {
+      inline-size: calc(100vw - 1rem);
+      max-block-size: calc(100dvh - 1.5rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+      padding: 1rem;
+    }
+  }
+
+  @media (max-width: 38em) {
+    .toolbar-actions {
+      justify-content: space-between;
+      gap: 0.12rem;
+    }
+
+    .toolbar-group {
+      gap: 0.14rem;
+    }
+
+    .tb-btn {
+      min-inline-size: 2.3rem;
+      min-block-size: 2.3rem;
+      padding-inline: 0;
+      border-radius: 50%;
+      flex: 0 0 auto;
+      scroll-snap-align: start;
+    }
+
+    .tb-btn > span {
+      display: none;
+    }
+
+    .filter-pill {
+      min-block-size: 1.9rem;
+      padding-inline: 0.48rem;
+      font-size: 0.73rem;
+      gap: 0.25rem;
+      flex: 0 0 auto;
+      scroll-snap-align: start;
+    }
+
+    .dock-action-btn {
+      min-block-size: 1.85rem;
+      padding-inline: 0.6rem;
+      font-size: 0.74rem;
+      flex: 0 0 auto;
+    }
+
+    .ins-author-row {
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      padding: 0.58rem 0.68rem;
+    }
+
+    .ins-actions-bar {
+      gap: 0.28rem;
+    }
+
+    .ins-actions-bar .sheet-btn {
+      padding-inline: 0.36rem;
+      font-size: 0.72rem;
+      gap: 0.2rem;
+    }
+
+    .files-click-hint {
+      display: none;
+    }
+
+    .picker-path-form {
+      flex-wrap: wrap;
+    }
+
+    .picker-path-form .apple-primary-btn,
+    .browser-dropzone .apple-primary-btn {
+      inline-size: 100%;
+    }
+  }
+
+  @media (max-width: 23.5em) {
+    .tb-btn {
+      min-inline-size: 2.08rem;
+      min-block-size: 2.08rem;
+    }
+
+    .clan-avatar-btn {
+      inline-size: 1.45rem;
+      block-size: 1.45rem;
+      min-inline-size: 1.45rem;
+      min-block-size: 1.45rem;
+    }
+
+    .branch-pill-btn {
+      max-inline-size: 7.25rem;
+    }
+
+    .ins-actions-bar {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }
 }
