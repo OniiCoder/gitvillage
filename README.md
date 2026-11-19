@@ -1,10 +1,14 @@
 # GitVillage
 
+[![Explore in GitVillage](https://gitvillage.on-forge.com/badge/OniiCoder/gitvillage.svg)](https://gitvillage.on-forge.com/gh/OniiCoder/gitvillage)
+
 Turn any Git repository into a living 3D floating-island village — built with **Laravel**, **Inertia.js**, **React**, **TypeScript**, and **Three.js**.
 
 **Live Demo:** [https://gitvillage.on-forge.com](https://gitvillage.on-forge.com) · [Explore `laravel/framework` in 3D →](https://gitvillage.on-forge.com/gh/laravel/framework)
 
 - **Every Commit is Architecture & Citizenry**: Commits rise as cottages, workshops, and towers along floating branch islands linked by non-overlapping, one-way fork and merge bridges.
+- **Git Archetypes, CI Weather & Time-Lapse Replay**: Commits earn playful titles & 3D gear (*Friday Deployer*, *The Demolitionist*, *3 AM Night Owl*, *One-Line Sniper*), failing GitHub Actions roll thunderclouds & rain over `HEAD`, and **Replay** grows the entire village chronologically commit-by-commit.
+- **Share & Capture Studio**: Export watermarked 3D postcards (`PNG`), 6-second sweeping turntable clips (`MP4`/`WebM`), dynamic `1200×630` OpenGraph cards, and embeddable `README.md` mini-skyline badges.
 - **Interactive File Diffs & Branch Switching**: Click any commit building to inspect changed files inline or inside a two-pane unified diff viewer, and switch active branches directly from the topbar.
 - **Carried Cargo Rigs**: Every citizen hauls a 3D backpack stack scaled by the number of files and lines changed in that commit.
 - **Contributor Clans**: Commits from the same author share collision-free clan colors, ear silhouettes, scarves, and crest standards (`● KV`, `◆ ML`) so collaborators are recognizable at a glance.

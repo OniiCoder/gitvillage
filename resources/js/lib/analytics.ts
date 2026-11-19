@@ -51,7 +51,7 @@ export type AnalyticsEventMap = {
     repo_slug: string;
   };
   atmosphere_changed: {
-    time_of_day: 'day' | 'sunset' | 'night';
+    time_of_day: 'day' | 'sunset' | 'night' | 'storm';
   };
   filter_changed: {
     filter: string;
@@ -74,6 +74,25 @@ export type AnalyticsEventMap = {
   };
   creator_link_clicked: {
     location: 'hud_footer' | 'guide_dialog';
+  };
+  postcard_captured: {
+    repo_type: 'demo' | 'github' | 'local';
+    repo_slug: string;
+  };
+  video_clip_recorded: {
+    mode: 'turntable' | 'timelapse';
+    format: 'mp4' | 'webm';
+    repo_type: 'demo' | 'github' | 'local';
+    repo_slug: string;
+  };
+  readme_badge_copied: {
+    format: 'markdown' | 'html';
+    repo_slug: string;
+  };
+  timelapse_started: {
+    repo_type: 'demo' | 'github' | 'local';
+    repo_slug: string;
+    commit_count: number;
   };
 };
 

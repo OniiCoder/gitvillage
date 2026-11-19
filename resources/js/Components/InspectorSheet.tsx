@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { DiffCodeBlock } from '@/Components/DiffCodeBlock';
 import { getFileStatusBadge } from '@/Components/DiffViewerDialog';
 import { SfIcon } from '@/Components/SfIconSprite';
@@ -7,6 +7,7 @@ import {
   extractFileExtension,
   trackEvent,
 } from '@/lib/analytics';
+import { computeCommitArchetype } from '@/lib/archetypes';
 import { sound } from '@/lib/sound';
 import {
   type ContributorClanProfile,
@@ -271,6 +272,7 @@ export function InspectorSheet({
 
   const commit = selection.commit;
   const role = getRoleMeta(commit.kind);
+  const archetype = computeCommitArchetype(commit);
   const cargoMeta = getCommitCargoMetrics(commit);
   const clan = clanMap.get(normalizeAuthorKey(commit));
   const bgHex =
@@ -320,6 +322,27 @@ export function InspectorSheet({
       <p id="ins-quirk" className="ins-quirk">
         {role.title} · {describeCarriedLoad(cargoMeta.filesCount, cargoMeta.totalLines)}
       </p>
+
+      <div
+        id="ins-archetype-card"
+        className="inset-group ins-archetype-card"
+        style={
+          {
+            '--arch-accent': archetype.accentCss,
+            '--arch-bg': archetype.bgCss,
+          } as CSSProperties
+        }
+      >
+        <span className="ins-arch-emoji" aria-hidden="true">
+          {archetype.emoji}
+        </span>
+        <div className="ins-arch-copy">
+          <strong className="ins-arch-title">{archetype.title}</strong>
+          <span className="ins-arch-roast">
+            {commit.authorName} {archetype.roast}
+          </span>
+        </div>
+      </div>
 
       <div id="ins-author-row" className="inset-group ins-author-row">
         <div

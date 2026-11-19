@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { computeCommitArchetype } from '@/lib/archetypes';
 import {
   type ContributorClanProfile,
   getCommitCargoMetrics,
@@ -113,12 +114,14 @@ export function CensusPopover({
               <div className="roster-group-box">
                 {ordered.map((c) => {
                   const cargo = getCommitCargoMetrics(c);
+                  const arch = computeCommitArchetype(c);
                   const clan = clanMap.get(normalizeAuthorKey(c));
                   return (
                     <button
                       key={c.sha}
                       type="button"
                       className="roster-row"
+                      title={`${arch.emoji} ${arch.title} — ${c.authorName} ${arch.roast}`}
                       onClick={() => {
                         popoverRef.current?.hidePopover?.();
                         onSelectCommit(c.sha);
@@ -137,6 +140,7 @@ export function CensusPopover({
                             {clan.initials}
                           </span>
                         )}
+                        <span aria-hidden="true">{arch.emoji}</span>
                         <span>{c.subject}</span>
                       </span>
                       <span className="roster-row-sha">

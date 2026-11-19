@@ -8,9 +8,13 @@ import { InspectorSheet } from '@/Components/InspectorSheet';
 import { extractDroppedRepoSource, LocalRepoDialog } from '@/Components/LocalRepoDialog';
 import { PresetsPopover } from '@/Components/PresetsPopover';
 import { SfIcon, SfIconSprite } from '@/Components/SfIconSprite';
+import { ShareStudioDialog } from '@/Components/ShareStudioDialog';
 import { SpatialTopbar } from '@/Components/SpatialTopbar';
+import { TimeLapseBar } from '@/Components/TimeLapseBar';
 import { describeRepoForAnalytics, trackEvent } from '@/lib/analytics';
+import { capturePostcardPng, recordVillageVideoClip } from '@/lib/captureStudio';
 import { createDemoRepoGraph } from '@/lib/demoRepo';
+import { closeTopLayerDialog } from '@/lib/topLayer';
 import { sound } from '@/lib/sound';
 import { VillageEngine, type VillageEngineSnapshot } from '@/lib/villageEngine';
 import { buildContributorClanMap } from '@/lib/villagerMesh';
@@ -33,6 +37,13 @@ function createInitialSnapshot(): VillageEngineSnapshot {
     followingSelected: false,
     isLoading: false,
     selection: null,
+    timeLapse: {
+      active: false,
+      paused: false,
+      currentIndex: 0,
+      totalCommits: [...demo.commitsBySha.values()].length,
+      currentCommit: null,
+    },
   };
 }
 
@@ -51,6 +62,8 @@ export default function VillageIndex({
   const engineRef = useRef<VillageEngine | null>(null);
   const localDialogRef = useRef<HTMLDialogElement | null>(null);
   const diffDialogRef = useRef<HTMLDialogElement | null>(null);
+  const shareDialogRef = useRef<HTMLDialogElement | null>(null);
+  const recordingAbortRef = useRef<AbortController | null>(null);
   const githubTokenRef = useRef('');
   const toastTimerRef = useRef<number | undefined>(undefined);
 
@@ -59,6 +72,11 @@ export default function VillageIndex({
   const [githubToken, setGithubToken] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
   const [diffSelectedFilename, setDiffSelectedFilename] = useState<string | null>(null);
+  const [recordingState, setRecordingState] = useState<{
+    active: boolean;
+    progress: number;
+    label: string;
+  }>({ active: false, progress: 0, label: '' });
   const [toast, setToast] = useState<{ msg: string; isError: boolean; visible: boolean }>({
     msg: '',
     isError: false,
@@ -182,31 +200,93 @@ export default function VillageIndex({
     void engineRef.current?.loadRepoBySpec(val, true);
   };
 
-  const handleShare = async () => {
-    const shareUrl = new URL(window.location.origin);
-    const g = snapshot.graph;
-    if (!g.isDemo && !g.isLocal && g.owner && g.repo) {
-      shareUrl.pathname = `/gh/${g.owner}/${g.repo}`;
+  const openShareStudio = () => {
+    sound.playPop(587.33);
+    shareDialogRef.current?.showModal();
+  };
+
+  const handleSnapPostcard = async () => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    try {
+      const filename = await capturePostcardPng(engine.getCanvasElement(), snapshot.graph);
+      sound.playPop(680);
+      trackEvent('postcard_captured', describeRepoForAnalytics(snapshot.graph));
+      showToast(`Saved ${filename}`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Postcard capture failed', true);
     }
-    if (!g.isLocal && g.currentBranch && g.currentBranch !== g.defaultBranch) {
-      shareUrl.searchParams.set('branch', g.currentBranch);
+  };
+
+  const runVideoCapture = async (mode: 'turntable' | 'timelapse') => {
+    const engine = engineRef.current;
+    if (!engine || recordingState.active) return;
+
+    recordingAbortRef.current?.abort();
+    const controller = new AbortController();
+    recordingAbortRef.current = controller;
+
+    const durationMs = mode === 'turntable' ? 6000 : engine.getTimeLapseDurationMs();
+    const label =
+      mode === 'turntable'
+        ? 'Recording 6s 3D Turntable…'
+        : 'Recording Time-Lapse Growth…';
+
+    setRecordingState({ active: true, progress: 0, label });
+
+    if (mode === 'turntable') {
+      engine.startTurntableOrbit(6.0);
+    } else {
+      engine.startTimeLapse();
     }
 
     try {
-      await navigator.clipboard.writeText(shareUrl.toString());
-      sound.playPop(660);
-      trackEvent('village_shared', {
-        ...describeRepoForAnalytics(g),
-        branch: g.currentBranch ?? g.defaultBranch,
+      const result = await recordVillageVideoClip(engine.getCanvasElement(), snapshot.graph, {
+        durationMs,
+        labelSuffix: mode,
+        signal: controller.signal,
+        onProgress: (progress) => {
+          setRecordingState((prev) => (prev.active ? { ...prev, progress } : prev));
+        },
       });
-      showToast(
-        g.isLocal
-          ? 'Shareable village link copied (loads showcase for friends)'
-          : 'Shareable village link copied to clipboard',
-      );
-    } catch {
-      showToast('Copy failed — clipboard access unavailable', true);
+      sound.playRepoLoaded();
+      trackEvent('video_clip_recorded', {
+        mode,
+        format: result.ext,
+        ...describeRepoForAnalytics(snapshot.graph),
+      });
+      showToast(`Saved ${result.filename}`);
+      await closeTopLayerDialog(shareDialogRef.current);
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === 'AbortError')) {
+        showToast(err instanceof Error ? err.message : 'Video capture failed', true);
+      }
+    } finally {
+      engine.stopTurntableOrbit();
+      setRecordingState({ active: false, progress: 0, label: '' });
     }
+  };
+
+  const handleCancelRecording = () => {
+    recordingAbortRef.current?.abort();
+    engineRef.current?.stopTurntableOrbit();
+    engineRef.current?.stopTimeLapse();
+    setRecordingState({ active: false, progress: 0, label: '' });
+    showToast('Recording cancelled');
+  };
+
+  const handleToggleCiStorm = () => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    const next = snapshot.timeOfDay === 'storm' ? 'day' : 'storm';
+    engine.applyAtmosphere(next);
+    sound.playPop(next === 'storm' ? 415.3 : 587.33);
+    trackEvent('atmosphere_changed', { time_of_day: next });
+    showToast(
+      next === 'storm'
+        ? '⛈️ Previewing CI Failing storm clouds over HEAD'
+        : '☀️ Cleared storm clouds — sunny village sky restored',
+    );
   };
 
   const openDiffModal = useCallback(
@@ -319,8 +399,9 @@ export default function VillageIndex({
         onToggleAuthor={(key) => engineRef.current?.toggleAuthorSpotlight(key)}
         onToggleWalkMode={() => engineRef.current?.toggleWalkMode()}
         onCycleSky={() => engineRef.current?.cycleAtmosphere()}
+        onToggleCiStorm={handleToggleCiStorm}
         onToggleMute={() => engineRef.current?.toggleMute()}
-        onShare={handleShare}
+        onShare={openShareStudio}
       />
 
       <p id="toolbar-status" className="sr-only" role="status">
@@ -353,12 +434,27 @@ export default function VillageIndex({
         onSelectVisitor={(idx) => engineRef.current?.focusVisitorByIndex(idx)}
       />
 
+      <TimeLapseBar
+        timeLapse={snapshot.timeLapse}
+        onTogglePause={() => engineRef.current?.togglePauseTimeLapse()}
+        onRestart={() => engineRef.current?.startTimeLapse()}
+        onStop={() => engineRef.current?.stopTimeLapse()}
+      />
+
       <BottomFilterDock
         activeFilter={snapshot.activeFilter}
         isLocal={Boolean(snapshot.graph.isLocal)}
         gateVisitorsCount={snapshot.gateVisitorsCount}
+        timeLapseActive={snapshot.timeLapse.active}
         onSelectFilter={(f) => engineRef.current?.setFilter(f)}
         onFlyToGate={() => engineRef.current?.flyToGate(true)}
+        onStartTimeLapse={() => {
+          if (snapshot.timeLapse.active) {
+            engineRef.current?.stopTimeLapse();
+          } else {
+            engineRef.current?.startTimeLapse();
+          }
+        }}
         onRandomVillager={() => engineRef.current?.focusRandomVillager()}
         onResetOverview={() => engineRef.current?.flyToOverview()}
       />
@@ -407,6 +503,19 @@ export default function VillageIndex({
         nativeFinderSupported={nativeFinderSupported}
         onSelectLocalServerPath={(p) => void engineRef.current?.loadLocalRepo(p, true)}
         onSelectBrowserSource={(src) => void engineRef.current?.loadBrowserRepoSource(src)}
+        onToast={showToast}
+      />
+
+      <ShareStudioDialog
+        dialogRef={shareDialogRef}
+        graph={snapshot.graph}
+        isRecording={recordingState.active}
+        recordingProgress={recordingState.progress}
+        recordingLabel={recordingState.label}
+        onSnapPostcard={() => void handleSnapPostcard()}
+        onRecordTurntable={() => void runVideoCapture('turntable')}
+        onRecordTimeLapse={() => void runVideoCapture('timelapse')}
+        onCancelRecording={handleCancelRecording}
         onToast={showToast}
       />
 

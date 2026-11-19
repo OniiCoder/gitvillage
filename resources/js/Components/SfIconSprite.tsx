@@ -317,6 +317,47 @@ export function SfIconSprite() {
           strokeLinejoin="round"
         />
       </symbol>
+      <symbol id="sf-storm" viewBox="0 0 20 20">
+        <path
+          d="M6.2 12.6H5.4a2.8 2.8 0 0 1-.3-5.6 4.2 4.2 0 0 1 8.1-1.1 2.7 2.7 0 0 1 1.4 5h-.8M10.4 10.2l-2 3.3h2.7l-1.5 3.3"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </symbol>
+      <symbol id="sf-play" viewBox="0 0 20 20">
+        <path
+          d="M6.5 4.8v10.4L15.2 10 6.5 4.8Z"
+          fill="currentColor"
+        />
+      </symbol>
+      <symbol id="sf-pause" viewBox="0 0 20 20">
+        <rect x="5.8" y="4.8" width="2.8" height="10.4" rx="1" fill="currentColor" />
+        <rect x="11.4" y="4.8" width="2.8" height="10.4" rx="1" fill="currentColor" />
+      </symbol>
+      <symbol id="sf-camera" viewBox="0 0 20 20">
+        <path
+          d="M3.2 7.2A1.8 1.8 0 0 1 5 5.4h1.6l1.1-1.5h4.6l1.1 1.5H15a1.8 1.8 0 0 1 1.8 1.8v6.8A1.8 1.8 0 0 1 15 15.8H5a1.8 1.8 0 0 1-1.8-1.8V7.2Z"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.55"
+          strokeLinejoin="round"
+        />
+        <circle cx="10" cy="10.6" r="2.6" fill="none" stroke="currentColor" strokeWidth="1.55" />
+      </symbol>
+      <symbol id="sf-video" viewBox="0 0 20 20">
+        <rect x="2.8" y="5.5" width="10.4" height="9" rx="1.8" fill="none" stroke="currentColor" strokeWidth="1.6" />
+        <path
+          d="m13.2 8.6 4-2.2v7.2l-4-2.2"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </symbol>
     </svg>
   );
 }

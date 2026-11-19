@@ -21,6 +21,9 @@ export interface BuiltWorld {
     windowGlows: THREE.MeshStandardMaterial[];
     headBeacon?: THREE.Object3D;
     fireflies?: THREE.Points;
+    stormGroup?: THREE.Group;
+    rainLines?: THREE.LineSegments;
+    lightningBolt?: THREE.Mesh;
   };
 }
 
@@ -907,6 +910,7 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
 
   islands.push({
     branch: mainBranch,
+    meshGroup: mainMesh,
     center: mainCenter,
     length: mainLength,
     width: mainWidth,
@@ -1001,6 +1005,7 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
 
     islands.push({
       branch,
+      meshGroup: bMesh,
       center: bCenter,
       length: bLength,
       width: bWidth,
@@ -1045,6 +1050,7 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
       kind: 'fork',
       fromBranch: mainBranch.name,
       toBranch: branch.name,
+      meshGroup: forkBridge.group,
       curve: forkBridge.curve,
       traversalCurve: buildBridgeTraversalCurve(
         forkEntrySpur.spinePt,
@@ -1093,6 +1099,7 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
         kind: 'merge',
         fromBranch: branch.name,
         toBranch: mainBranch.name,
+        meshGroup: mergeBridge.group,
         curve: mergeBridge.curve,
         traversalCurve: buildBridgeTraversalCurve(
           mergeEntrySpur.spinePt,
@@ -1158,6 +1165,88 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
   const fireflies = new THREE.Points(moteGeo, moteMat);
   worldGroup.add(fireflies);
   animatedProps.fireflies = fireflies;
+
+  // 4b. CI Weather Storm System (Dark Thundercloud over HEAD + Falling Rain Streaks!)
+  const stormGroup = new THREE.Group();
+  stormGroup.visible = false;
+
+  const headX = mainLength * 0.4;
+  const stormCloudMat = new THREE.MeshStandardMaterial({
+    color: 0x1e293b,
+    emissive: 0x0f172a,
+    emissiveIntensity: 0.35,
+    roughness: 0.92,
+    flatShading: true,
+  });
+  const headThunderCloud = new THREE.Group();
+  const stormPuffs: Array<[number, number, number, number]> = [
+    [0, 0, 0, 2.1],
+    [-1.8, -0.25, 0.35, 1.55],
+    [1.75, -0.2, -0.25, 1.65],
+    [-0.75, 0.55, -0.4, 1.45],
+    [0.85, 0.48, 0.35, 1.5],
+  ];
+  for (const [px, py, pz, pr] of stormPuffs) {
+    const puff = new THREE.Mesh(new THREE.DodecahedronGeometry(pr, 0), stormCloudMat);
+    puff.position.set(px, py, pz);
+    puff.scale.set(1.25, 0.68, 1.05);
+    headThunderCloud.add(puff);
+  }
+  headThunderCloud.position.set(headX, 6.8, 0);
+  stormGroup.add(headThunderCloud);
+
+  // Jagged glowing lightning bolt beneath HEAD thundercloud (flashes intermittently)
+  const boltShape = new THREE.Shape();
+  boltShape.moveTo(0.15, 0);
+  boltShape.lineTo(-0.38, -1.65);
+  boltShape.lineTo(0.08, -1.65);
+  boltShape.lineTo(-0.28, -3.4);
+  boltShape.lineTo(0.48, -1.45);
+  boltShape.lineTo(0.02, -1.45);
+  boltShape.closePath();
+  const lightningBolt = new THREE.Mesh(
+    new THREE.ExtrudeGeometry(boltShape, { depth: 0.12, bevelEnabled: false }),
+    new THREE.MeshBasicMaterial({
+      color: 0xfef08a,
+      transparent: true,
+      opacity: 0,
+    }),
+  );
+  lightningBolt.position.set(headX, 5.8, 0);
+  stormGroup.add(lightningBolt);
+
+  // Slanted 3D rain streaks across the entire village
+  const rainCount = 340;
+  const rainVerts = new Float32Array(rainCount * 6);
+  const rainSpanX = mainLength + 28;
+  for (let i = 0; i < rainCount; i++) {
+    const rx = (Math.random() - 0.5) * rainSpanX;
+    const ry = Math.random() * 20 - 2;
+    const rz = (Math.random() - 0.5) * 42;
+    const base = i * 6;
+    rainVerts[base] = rx;
+    rainVerts[base + 1] = ry;
+    rainVerts[base + 2] = rz;
+    rainVerts[base + 3] = rx - 0.22;
+    rainVerts[base + 4] = ry - 1.15;
+    rainVerts[base + 5] = rz;
+  }
+  const rainGeo = new THREE.BufferGeometry();
+  rainGeo.setAttribute('position', new THREE.BufferAttribute(rainVerts, 3));
+  const rainLines = new THREE.LineSegments(
+    rainGeo,
+    new THREE.LineBasicMaterial({
+      color: 0x93c5fd,
+      transparent: true,
+      opacity: 0.52,
+    }),
+  );
+  stormGroup.add(rainLines);
+  worldGroup.add(stormGroup);
+
+  animatedProps.stormGroup = stormGroup;
+  animatedProps.rainLines = rainLines;
+  animatedProps.lightningBolt = lightningBolt;
 
   // 5. If this is a Local Repo, build the Working-Tree Village Gate & Sky-Dock Arrival Pier!
   let gate: GateLayout | undefined;

@@ -19,6 +19,8 @@
   h3,
   p,
   pre,
+  code,
+  progress,
   span,
   a,
   kbd {
@@ -830,6 +832,342 @@
   .gate-pill {
     background: rgba(255, 255, 255, 0.08);
     color: var(--ink-primary);
+  }
+
+  .dock-action-btn.is-active {
+    background: color-mix(in oklab, var(--apple-blue) 28%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--apple-blue) 60%, transparent);
+    color: #93c5fd;
+    font-weight: 600;
+  }
+
+  /* CI Weather Topbar Pill */
+  .ci-weather-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28rem;
+    min-block-size: 1.68rem;
+    padding-inline: 0.56rem;
+    border-radius: var(--radius-capsule);
+    border: none;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    cursor: pointer;
+    white-space: nowrap;
+    flex: none;
+    background: rgba(52, 211, 153, 0.14);
+    color: #6ee7b7;
+    box-shadow: inset 0 0 0 0.5px rgba(52, 211, 153, 0.35);
+  }
+
+  .ci-weather-pill.is-pending {
+    background: rgba(251, 191, 36, 0.16);
+    color: #fde68a;
+    box-shadow: inset 0 0 0 0.5px rgba(251, 191, 36, 0.38);
+  }
+
+  .ci-weather-pill.is-failing {
+    background: rgba(248, 113, 113, 0.18);
+    color: #fca5a5;
+    box-shadow: inset 0 0 0 0.5px rgba(248, 113, 113, 0.45);
+  }
+
+  @media (hover: hover) {
+    .ci-weather-pill:hover {
+      filter: brightness(1.14);
+    }
+  }
+
+  /* Accessible Custom <progress> Bar per modern-web-guidance `progress` */
+  progress.gv-progress {
+    appearance: none;
+    border: 0 solid;
+    overflow: clip;
+    display: block;
+    inline-size: 100%;
+    block-size: 0.42rem;
+    --progress-bar-radius: 999px;
+    border-radius: var(--progress-bar-radius);
+    background: rgba(255, 255, 255, 0.12);
+    box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.25);
+  }
+
+  progress.gv-progress::-webkit-progress-bar {
+    background: transparent;
+  }
+
+  progress.gv-progress::-webkit-progress-value {
+    background: linear-gradient(90deg, var(--apple-blue), #34d399);
+    border-radius: var(--progress-bar-radius);
+    transition: inline-size 0.18s ease;
+  }
+
+  progress.gv-progress::-moz-progress-bar {
+    background: linear-gradient(90deg, var(--apple-blue), #34d399);
+    border-radius: var(--progress-bar-radius);
+    transition: inline-size 0.18s ease;
+  }
+
+  /* Time-Lapse Replay Floating Scrubber HUD */
+  .timelapse-hud {
+    position: fixed;
+    bottom: calc(4.2rem + env(safe-area-inset-bottom, 0px));
+    left: 50%;
+    transform: translateX(-50%);
+    inline-size: min(33rem, calc(100vw - 1.25rem));
+    padding: 0.58rem 0.78rem 0.65rem;
+    background: var(--material-sheet);
+    backdrop-filter: var(--blur-vibrancy);
+    -webkit-backdrop-filter: var(--blur-vibrancy);
+    box-shadow: var(--specular-edge), var(--shadow-ornament);
+    border-radius: 1rem;
+    z-index: 11;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+
+  .timelapse-top-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    min-inline-size: 0;
+  }
+
+  .timelapse-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    min-inline-size: 0;
+    flex: 1;
+  }
+
+  .timelapse-counter {
+    font-family: var(--font-mono);
+    font-size: 0.69rem;
+    font-weight: 600;
+    color: #7dd3fc;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .timelapse-commit-line {
+    font-size: 0.77rem;
+    color: var(--ink-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .timelapse-commit-line strong {
+    color: var(--ink-primary);
+    font-weight: 600;
+  }
+
+  .timelapse-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex: none;
+  }
+
+  /* Inspector Commit Archetype Callout Card */
+  .ins-archetype-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.62rem;
+    padding: 0.62rem 0.75rem;
+    margin-block-end: 0.75rem;
+    background: var(--arch-bg, rgba(147, 197, 253, 0.14));
+    box-shadow: inset 0 0 0 0.5px color-mix(in oklab, var(--arch-accent, #93c5fd) 42%, transparent);
+  }
+
+  .ins-arch-emoji {
+    font-size: 1.25rem;
+    line-height: 1.15;
+    flex: none;
+  }
+
+  .ins-arch-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 0.12rem;
+    min-inline-size: 0;
+  }
+
+  .ins-arch-title {
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--arch-accent, #93c5fd);
+  }
+
+  .ins-arch-roast {
+    font-size: 0.75rem;
+    line-height: 1.38;
+    color: var(--ink-primary);
+  }
+
+  /* Share & Capture Studio Modal */
+  .share-studio-dialog {
+    inline-size: min(38rem, calc(100vw - 1.25rem));
+    max-block-size: calc(100dvh - 2rem);
+    overflow-y: auto;
+    padding: 1.2rem;
+    user-select: text;
+  }
+
+  .share-url-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-block-end: 0.5rem;
+  }
+
+  .share-url-input {
+    flex: 1;
+    min-inline-size: 0;
+    min-block-size: 2.15rem;
+    padding-inline: 0.72rem;
+    border-radius: var(--radius-capsule);
+    border: none;
+    background: rgba(0, 0, 0, 0.3);
+    box-shadow: inset 0 0 0 0.5px var(--hairline-border);
+    color: var(--ink-primary);
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    outline: none;
+  }
+
+  .share-social-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .share-social-pills a {
+    text-decoration: none;
+  }
+
+  .capture-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 10.5rem), 1fr));
+    gap: 0.5rem;
+  }
+
+  .capture-action-card {
+    gap: 0.35rem;
+  }
+
+  .capture-action-card:disabled {
+    opacity: 0.42;
+    cursor: not-allowed;
+  }
+
+  .capture-card-top {
+    display: flex;
+    align-items: center;
+    gap: 0.48rem;
+  }
+
+  .capture-icon-badge {
+    inline-size: 1.75rem;
+    block-size: 1.75rem;
+    border-radius: 0.48rem;
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+  }
+
+  .badge-blue {
+    background: rgba(10, 132, 255, 0.22);
+    color: #70b8ff;
+  }
+
+  .badge-emerald {
+    background: rgba(16, 185, 129, 0.22);
+    color: #6ee7b7;
+  }
+
+  .badge-amber {
+    background: rgba(245, 158, 11, 0.22);
+    color: #fcd34d;
+  }
+
+  .capture-progress-box {
+    padding: 0.85rem 0.95rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+
+  .capture-progress-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.81rem;
+  }
+
+  .capture-progress-pct {
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    font-weight: 600;
+    color: #6ee7b7;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .capture-progress-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.74rem;
+    color: var(--ink-tertiary);
+  }
+
+  .badge-studio-box {
+    padding: 0.8rem 0.9rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.58rem;
+  }
+
+  .badge-preview-stage {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.65rem;
+    border-radius: 0.55rem;
+    background: rgba(3, 7, 18, 0.55);
+    box-shadow: inset 0 0 0 0.5px var(--hairline-subtle);
+  }
+
+  .badge-preview-stage img {
+    height: 28px;
+    width: auto;
+    max-inline-size: 100%;
+  }
+
+  .badge-code-snippet {
+    margin: 0;
+    padding: 0.52rem 0.68rem;
+    border-radius: 0.48rem;
+    background: rgba(0, 0, 0, 0.34);
+    box-shadow: inset 0 0 0 0.5px var(--hairline-subtle);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: #cbd5e1;
+    overflow-x: auto;
+    white-space: pre;
+  }
+
+  .badge-copy-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.42rem;
   }
 
   /* Bottom-Left Spatial Creator Attribution Ornament */
@@ -2559,12 +2897,21 @@
     }
   }
 
+  @media (max-width: 78em) {
+    .ci-weather-pill {
+      display: none;
+    }
+  }
+
   @media (max-width: 68em) {
     .stats-pill {
       display: none;
     }
     .repo-form {
       inline-size: 14rem;
+    }
+    .timelapse-hud {
+      bottom: calc(6.5rem + env(safe-area-inset-bottom, 0px));
     }
     .bottom-dock {
       bottom: calc(3.25rem + env(safe-area-inset-bottom, 0px));
@@ -2711,10 +3058,15 @@
     }
 
     .local-picker-dialog,
-    .guide-dialog {
+    .guide-dialog,
+    .share-studio-dialog {
       inline-size: calc(100vw - 1rem);
       max-block-size: calc(100dvh - 1.5rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
       padding: 1rem;
+    }
+
+    .timelapse-hud {
+      bottom: calc(8.35rem + env(safe-area-inset-bottom, 0px));
     }
   }
 
@@ -2776,12 +3128,14 @@
       display: none;
     }
 
-    .picker-path-form {
+    .picker-path-form,
+    .share-url-row {
       flex-wrap: wrap;
     }
 
     .picker-path-form .apple-primary-btn,
-    .browser-dropzone .apple-primary-btn {
+    .browser-dropzone .apple-primary-btn,
+    .share-url-row .apple-primary-btn {
       inline-size: 100%;
     }
   }

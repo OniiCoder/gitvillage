@@ -5,8 +5,10 @@ interface BottomFilterDockProps {
   activeFilter: string;
   isLocal: boolean;
   gateVisitorsCount: number;
+  timeLapseActive: boolean;
   onSelectFilter: (filter: string) => void;
   onFlyToGate: () => void;
+  onStartTimeLapse: () => void;
   onRandomVillager: () => void;
   onResetOverview: () => void;
 }
@@ -24,8 +26,10 @@ export function BottomFilterDock({
   activeFilter,
   isLocal,
   gateVisitorsCount,
+  timeLapseActive,
   onSelectFilter,
   onFlyToGate,
+  onStartTimeLapse,
   onRandomVillager,
   onResetOverview,
 }: BottomFilterDockProps) {
@@ -71,6 +75,18 @@ export function BottomFilterDock({
             <span id="gate-dock-label">Gate · {gateVisitorsCount}</span>
           </button>
         )}
+
+        <button
+          type="button"
+          id="replay-btn"
+          className={`dock-action-btn${timeLapseActive ? ' is-active' : ''}`}
+          aria-pressed={timeLapseActive}
+          title="Watch repository grow chronologically commit-by-commit"
+          onClick={onStartTimeLapse}
+        >
+          <SfIcon name="sf-play" size={12} />
+          <span>Replay</span>
+        </button>
 
         <button
           type="button"

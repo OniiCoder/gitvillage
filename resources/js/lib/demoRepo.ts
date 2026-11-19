@@ -21,6 +21,7 @@ interface SeedCommit {
   subject: string;
   body: string;
   files: CommitFileChange[];
+  archetypeWallClock?: 'friday_deploy' | 'night_owl';
 }
 
 const BRANCH_PALETTE = ['#34d399', '#60a5fa', '#f472b6', '#fbbf24', '#a78bfa', '#fb923c'];
@@ -361,10 +362,10 @@ export function createDemoRepoGraph(): RepoVillageGraph {
       authorLogin: 'soren-rust',
       authorName: 'Soren Lindqvist',
       minutesAgo: 60 * 46,
-      subject: 'fix(bridges): tighten suspension cables against harmonic resonance',
-      body: 'Three commits marching in lockstep across a bridge caused dramatic plank bounce. Added cross-bracing tension.',
+      subject: 'fix(bridges): clamp cable damping coefficient with one-line guard',
+      body: 'Three commits marching in lockstep across a bridge caused dramatic plank bounce. One-line damping clamp solved it.',
       files: [
-        { filename: 'src/world/bridges.ts', status: 'modified', additions: 37, deletions: 14 },
+        { filename: 'src/world/bridges.ts', status: 'modified', additions: 2, deletions: 1 },
       ],
     },
     {
@@ -454,6 +455,7 @@ export function createDemoRepoGraph(): RepoVillageGraph {
       authorLogin: 'kael-voxel',
       authorName: 'Kael Vance',
       minutesAgo: 60 * 19,
+      archetypeWallClock: 'night_owl',
       subject: 'feat(lanterns): hang warm paper lanterns along every branch trail',
       body: 'Places emissive amber lanterns at fork junctions so nocturnal commits never lose their parent pointer.',
       files: [
@@ -468,10 +470,10 @@ export function createDemoRepoGraph(): RepoVillageGraph {
       authorLogin: 'jun-audio',
       authorName: 'Jun Takahashi',
       minutesAgo: 60 * 9,
-      subject: 'refactor(shaders): batch instanced blossom petals & cloud puffs',
-      body: 'Cuts draw calls by 68% across large monorepos while keeping lush swaying foliage.',
+      subject: 'refactor(shaders): delete legacy foliage pass & batch instanced petals',
+      body: 'Deletes 248 lines of legacy multi-pass shader boilerplate and cuts draw calls by 68%.',
       files: [
-        { filename: 'src/world/foliage.ts', status: 'modified', additions: 94, deletions: 71 },
+        { filename: 'src/world/foliage.ts', status: 'modified', additions: 24, deletions: 248 },
       ],
     },
     {
@@ -482,6 +484,7 @@ export function createDemoRepoGraph(): RepoVillageGraph {
       authorLogin: 'kael-voxel',
       authorName: 'Kael Vance',
       minutesAgo: 85,
+      archetypeWallClock: 'friday_deploy',
       subject: 'feat(walk-mode): drop a playable Explorer avatar onto the islands',
       body: 'Press Walk Mode (WASD / Arrows) to stroll across islands and bridges in third-person and greet commits face-to-face!',
       files: [
@@ -546,6 +549,16 @@ export function createDemoRepoGraph(): RepoVillageGraph {
     }));
     const additions = hydratedFiles.reduce((sum, f) => sum + f.additions, 0);
     const deletions = hydratedFiles.reduce((sum, f) => sum + f.deletions, 0);
+    const rawEpoch = now - s.minutesAgo * 60_000;
+    const timestamp =
+      s.id === 'f1'
+        ? '2026-11-13T03:14:00-05:00'
+        : s.id === 'f2'
+          ? '2026-11-13T12:20:00-05:00'
+          : s.id === 'f3'
+            ? '2026-11-13T17:42:00-05:00'
+            : new Date(rawEpoch).toISOString();
+
     const commit: CommitData = {
       sha: s.sha,
       shortSha: s.sha.slice(0, 7),
@@ -553,7 +566,7 @@ export function createDemoRepoGraph(): RepoVillageGraph {
       body: s.body,
       authorName: s.authorName,
       authorLogin: s.authorLogin,
-      timestamp: new Date(now - s.minutesAgo * 60_000).toISOString(),
+      timestamp,
       branch: s.branch,
       parents: [...s.parents],
       children: [],
@@ -624,6 +637,10 @@ export function createDemoRepoGraph(): RepoVillageGraph {
     allBranches: [...branchOrder],
     stars: 1420,
     isDemo: true,
+    ciWeather: {
+      status: 'passing',
+      summary: '14 checks passing',
+    },
     branches,
     commitsBySha,
   };

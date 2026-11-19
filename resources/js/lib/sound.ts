@@ -27,6 +27,13 @@ const NIGHT_PROGRESSION: ChordVoicing[] = [
   { pad: [45, 52, 54, 59], scale: [73, 76, 78, 80, 83, 85] }, // Asus2(add6)
 ];
 
+const STORM_PROGRESSION: ChordVoicing[] = [
+  { pad: [40, 47, 52, 55], scale: [64, 67, 71, 74, 76, 79] }, // Em9
+  { pad: [36, 43, 48, 55], scale: [64, 67, 72, 74, 76, 79] }, // Cmaj7(9)
+  { pad: [45, 52, 55, 60], scale: [64, 67, 69, 72, 76, 79] }, // Am9
+  { pad: [47, 54, 57, 62], scale: [66, 69, 71, 74, 76, 78] }, // Bm7
+];
+
 function midiToFreq(midi: number): number {
   return 440 * 2 ** ((midi - 69) / 12);
 }
@@ -124,6 +131,7 @@ class CozySoundEngine {
   }
 
   private getFilterCutoffForMood(mood: TimeOfDay): number {
+    if (mood === 'storm') return 940;
     if (mood === 'sunset') return 1180;
     if (mood === 'night') return 1480;
     return 1750;
@@ -132,6 +140,7 @@ class CozySoundEngine {
   private getTargetMusicGain(): number {
     if (this.muted || !this.musicEnabled) return 0.0001;
     // Ultra-subtle ambient level so it gently cushions the village without overpowering chimes
+    if (this.mood === 'storm') return 0.12;
     if (this.mood === 'night') return 0.115;
     if (this.mood === 'sunset') return 0.125;
     return 0.135;
@@ -237,7 +246,14 @@ class CozySoundEngine {
   private scheduleLookahead(): void {
     if (!this.ctx || this.ctx.state !== 'running' || this.muted || !this.musicEnabled) return;
 
-    const stepDur = this.mood === 'night' ? 0.72 : this.mood === 'sunset' ? 0.64 : 0.56;
+    const stepDur =
+      this.mood === 'storm'
+        ? 0.68
+        : this.mood === 'night'
+          ? 0.72
+          : this.mood === 'sunset'
+            ? 0.64
+            : 0.56;
     const lookaheadHorizon = this.ctx.currentTime + 0.48;
 
     while (this.nextStepTime < lookaheadHorizon) {
@@ -254,11 +270,13 @@ class CozySoundEngine {
     if (!this.ctx || !this.musicDryBus || !this.musicEchoSend) return;
 
     const progression =
-      this.mood === 'night'
-        ? NIGHT_PROGRESSION
-        : this.mood === 'sunset'
-          ? SUNSET_PROGRESSION
-          : DAY_PROGRESSION;
+      this.mood === 'storm'
+        ? STORM_PROGRESSION
+        : this.mood === 'night'
+          ? NIGHT_PROGRESSION
+          : this.mood === 'sunset'
+            ? SUNSET_PROGRESSION
+            : DAY_PROGRESSION;
     const chord = progression[this.barIndex % progression.length];
 
     // On beat 0 of every bar (8-step bar), swell a warm felt/pad chord

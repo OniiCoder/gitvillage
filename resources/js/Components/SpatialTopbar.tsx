@@ -23,6 +23,7 @@ interface SpatialTopbarProps {
   onToggleAuthor: (authorKey: string) => void;
   onToggleWalkMode: () => void;
   onCycleSky: () => void;
+  onToggleCiStorm: () => void;
   onToggleMute: () => void;
   onShare: () => void;
 }
@@ -46,6 +47,7 @@ export function SpatialTopbar({
   onToggleAuthor,
   onToggleWalkMode,
   onCycleSky,
+  onToggleCiStorm,
   onToggleMute,
   onShare,
 }: SpatialTopbarProps) {
@@ -110,7 +112,15 @@ export function SpatialTopbar({
     : `${graph.repo} · ${villagerCount} commits`;
 
   const skySymbol =
-    timeOfDay === 'day' ? 'sf-sun' : timeOfDay === 'sunset' ? 'sf-sunset' : 'sf-moon';
+    timeOfDay === 'day'
+      ? 'sf-sun'
+      : timeOfDay === 'sunset'
+        ? 'sf-sunset'
+        : timeOfDay === 'storm'
+          ? 'sf-storm'
+          : 'sf-moon';
+
+  const ciWeather = graph.ciWeather;
 
   return (
     <header className="spatial-topbar">
@@ -129,6 +139,33 @@ export function SpatialTopbar({
           <span id="repo-stats-pill" className="stats-pill">
             {statsLabel}
           </span>
+          {ciWeather && ciWeather.status !== 'unknown' && (
+            <button
+              type="button"
+              id="ci-weather-pill"
+              className={`ci-weather-pill is-${timeOfDay === 'storm' ? 'failing' : ciWeather.status}`}
+              aria-pressed={timeOfDay === 'storm'}
+              title={`${ciWeather.summary} — click to ${timeOfDay === 'storm' ? 'clear storm sky' : 'preview CI storm clouds'}`}
+              onClick={onToggleCiStorm}
+            >
+              <span aria-hidden="true">
+                {timeOfDay === 'storm' || ciWeather.status === 'failing'
+                  ? '⛈️'
+                  : ciWeather.status === 'pending'
+                    ? '⛅'
+                    : '☀️'}
+              </span>
+              <span>
+                {timeOfDay === 'storm' && ciWeather.status !== 'failing'
+                  ? 'Storm Preview'
+                  : ciWeather.status === 'failing'
+                    ? 'CI Failing'
+                    : ciWeather.status === 'pending'
+                      ? 'CI Running'
+                      : 'CI Passing'}
+              </span>
+            </button>
+          )}
           <div
             id="contributor-stack"
             className="contributor-stack"
@@ -267,8 +304,8 @@ export function SpatialTopbar({
             type="button"
             id="sky-btn"
             className="tb-btn tb-icon-only"
-            aria-label="Cycle time of day"
-            title="Cycle time of day"
+            aria-label="Cycle sky and weather (Day, Sunset, Night, Storm)"
+            title="Cycle sky & weather (Day · Sunset · Night · Storm)"
             onClick={onCycleSky}
           >
             <SfIcon name={skySymbol} size={15} />
@@ -288,8 +325,8 @@ export function SpatialTopbar({
             type="button"
             id="share-btn"
             className="tb-btn tb-icon-only"
-            aria-label="Copy shareable link"
-            title="Copy shareable link"
+            aria-label="Share, capture postcard or video, and embed README badge"
+            title="Share, capture 6s video / postcard & README badge"
             onClick={onShare}
           >
             <SfIcon name="sf-share" size={15} />

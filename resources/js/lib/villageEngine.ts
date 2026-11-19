@@ -1,12 +1,18 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { describeRepoForAnalytics, trackEvent } from '@/lib/analytics';
+import { computeCommitArchetype } from '@/lib/archetypes';
 import {
   type BrowserRepoSource,
   loadBrowserGitRepoVillage,
 } from '@/lib/browserGitReader';
 import { createDemoRepoGraph } from '@/lib/demoRepo';
-import { hydrateCommitDetail, loadGitHubRepoVillage, parseRepoInput } from '@/lib/githubLoader';
+import {
+  fetchRepoCiWeather,
+  hydrateCommitDetail,
+  loadGitHubRepoVillage,
+  parseRepoInput,
+} from '@/lib/githubLoader';
 import {
   checkoutLocalBranch,
   hydrateLocalCommitDetail,
@@ -35,6 +41,7 @@ import type {
   InspectorSelection,
   IslandLayout,
   RepoVillageGraph,
+  TimeLapseState,
   TimeOfDay,
   VillagerEntity,
 } from '@/types/village';
@@ -53,6 +60,7 @@ export interface VillageEngineSnapshot {
   followingSelected: boolean;
   isLoading: boolean;
   selection: InspectorSelection;
+  timeLapse: TimeLapseState;
 }
 
 export interface VillageEngineCallbacks {
@@ -127,6 +135,28 @@ export class VillageEngine {
     active: false,
   };
 
+  private turntableOrbit = {
+    active: false,
+    elapsed: 0,
+    duration: 6.0,
+    radius: 28,
+    height: 15,
+    lookAt: new THREE.Vector3(0, 1.2, 0),
+  };
+
+  private timeLapse = {
+    active: false,
+    paused: false,
+    queue: [] as VillagerEntity[],
+    currentIndex: 0,
+    stepTimer: 0,
+    stepInterval: 0.25,
+    revealedBranches: new Set<string>(),
+  };
+
+  private lightningTimer = 4.2;
+  private lightningFlash = 0;
+
   private raycaster = new THREE.Raycaster();
   private pointerNDC = new THREE.Vector2();
   private pointerDownPos = { x: 0, y: 0 };
@@ -149,6 +179,7 @@ export class VillageEngine {
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
+      preserveDrawingBuffer: true,
       powerPreference: 'high-performance',
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -298,6 +329,16 @@ export class VillageEngine {
       followingSelected: this.followVillager,
       isLoading: this.isLoading,
       selection,
+      timeLapse: {
+        active: this.timeLapse.active,
+        paused: this.timeLapse.paused,
+        currentIndex: this.timeLapse.currentIndex,
+        totalCommits: this.timeLapse.active ? this.timeLapse.queue.length : this.villagers.length,
+        currentCommit:
+          this.timeLapse.active && this.timeLapse.currentIndex > 0
+            ? (this.timeLapse.queue[this.timeLapse.currentIndex - 1]?.commit ?? null)
+            : null,
+      },
     });
   }
 
@@ -325,6 +366,17 @@ export class VillageEngine {
       this.dirLight.color.set('#fb923c');
       this.dirLight.intensity = 1.65;
       this.dirLight.position.set(-34, 15, 24);
+    } else if (mode === 'storm') {
+      this.skyUniforms.uTopColor.value.set('#090d16');
+      this.skyUniforms.uMidColor.value.set('#1e293b');
+      this.skyUniforms.uBottomColor.value.set('#334155');
+      (this.scene.fog as THREE.FogExp2).color.set('#1e293b');
+      this.hemiLight.color.set('#64748b');
+      this.hemiLight.groundColor.set('#0f172a');
+      this.hemiLight.intensity = 0.78;
+      this.dirLight.color.set('#cbd5e1');
+      this.dirLight.intensity = 0.85;
+      this.dirLight.position.set(18, 32, 16);
     } else {
       this.skyUniforms.uTopColor.value.set('#020617');
       this.skyUniforms.uMidColor.value.set('#0f172a');
@@ -339,7 +391,8 @@ export class VillageEngine {
     }
 
     if (this.builtWorld) {
-      const lampBoost = mode === 'night' ? 2.2 : mode === 'sunset' ? 1.4 : 0.45;
+      const lampBoost =
+        mode === 'night' ? 2.2 : mode === 'storm' ? 1.85 : mode === 'sunset' ? 1.4 : 0.45;
       for (const mat of this.builtWorld.animatedProps.lanternGlows) {
         mat.emissiveIntensity = lampBoost;
       }
@@ -348,7 +401,11 @@ export class VillageEngine {
       }
       if (this.builtWorld.animatedProps.fireflies) {
         const pMat = this.builtWorld.animatedProps.fireflies.material as THREE.PointsMaterial;
-        pMat.opacity = mode === 'night' ? 0.95 : mode === 'sunset' ? 0.7 : 0.35;
+        pMat.opacity =
+          mode === 'night' ? 0.95 : mode === 'sunset' ? 0.7 : mode === 'storm' ? 0.1 : 0.35;
+      }
+      if (this.builtWorld.animatedProps.stormGroup) {
+        this.builtWorld.animatedProps.stormGroup.visible = mode === 'storm';
       }
     }
     sound.setMood(mode);
@@ -356,7 +413,7 @@ export class VillageEngine {
   }
 
   public cycleAtmosphere(): void {
-    const order: TimeOfDay[] = ['day', 'sunset', 'night'];
+    const order: TimeOfDay[] = ['day', 'sunset', 'night', 'storm'];
     const next = order[(order.indexOf(this.timeOfDay) + 1) % order.length];
     this.applyAtmosphere(next);
     sound.playPop(523.25);
@@ -513,6 +570,192 @@ export class VillageEngine {
       targetPos: new THREE.Vector3(-dist * 0.24, dist * 0.56, dist * 0.86),
       active: true,
     };
+    this.emit();
+  }
+
+  public getCanvasElement(): HTMLCanvasElement {
+    return this.canvas;
+  }
+
+  public getTimeLapseDurationMs(): number {
+    const total = Math.max(1, this.villagers.length);
+    const interval = Math.max(0.16, Math.min(0.45, 11.0 / total));
+    return Math.round((total * interval + 1.4) * 1000);
+  }
+
+  public startTurntableOrbit(durationSec = 6.0): void {
+    if (!this.builtWorld) return;
+    if (this.cameraMode !== 'orbit') {
+      this.setCameraMode('orbit');
+    }
+    this.followVillager = false;
+    this.cameraFlight.active = false;
+    const mainLen = this.builtWorld.islands[0]?.length ?? 28;
+    const extraGate = this.builtWorld.gate ? this.builtWorld.gate.dockLength * 0.5 : 0;
+    const dist = Math.max(24, (mainLen + extraGate) * 0.72);
+    this.turntableOrbit = {
+      active: true,
+      elapsed: 0,
+      duration: durationSec,
+      radius: dist * 0.9,
+      height: dist * 0.54,
+      lookAt: new THREE.Vector3(extraGate * 0.3, 1.25, 0),
+    };
+  }
+
+  public stopTurntableOrbit(): void {
+    this.turntableOrbit.active = false;
+  }
+
+  public startTimeLapse(): void {
+    if (!this.builtWorld || this.villagers.length === 0) return;
+    if (this.cameraMode !== 'orbit') {
+      this.setCameraMode('orbit');
+    }
+    this.closeInspector();
+    this.turntableOrbit.active = false;
+
+    const ordered = [...this.villagers].toSorted((a, b) => {
+      const ta = Date.parse(a.commit.timestamp) || 0;
+      const tb = Date.parse(b.commit.timestamp) || 0;
+      if (ta !== tb) return ta - tb;
+      if (b.commit.parents.includes(a.commit.sha)) return -1;
+      if (a.commit.parents.includes(b.commit.sha)) return 1;
+      return 0;
+    });
+
+    const stepInterval = Math.max(0.16, Math.min(0.45, 11.0 / ordered.length));
+    this.timeLapse = {
+      active: true,
+      paused: false,
+      queue: ordered,
+      currentIndex: 0,
+      stepTimer: 0.08,
+      stepInterval,
+      revealedBranches: new Set([this.builtWorld.islands[0]?.branch.name ?? 'main']),
+    };
+
+    // Hide all villagers and side branch islands/bridges at t = 0
+    for (const v of this.villagers) {
+      v.root.visible = false;
+      v.spawnScale = 0.05;
+      v.root.scale.setScalar(0.05);
+      v.activeBridge = undefined;
+      v.behavior = 'stroll';
+      const el = this.emoteElements.get(`c:${v.commit.sha}`);
+      if (el) el.hidden = true;
+    }
+
+    this.builtWorld.islands.forEach((isl, idx) => {
+      isl.meshGroup.visible = idx === 0;
+    });
+    for (const br of this.builtWorld.bridges) {
+      br.meshGroup.visible = false;
+    }
+
+    this.flyToOverview();
+    sound.playPop(587.33);
+    trackEvent('timelapse_started', {
+      ...describeRepoForAnalytics(this.activeGraph),
+      commit_count: ordered.length,
+    });
+    this.emit();
+  }
+
+  public togglePauseTimeLapse(): void {
+    if (!this.timeLapse.active) return;
+    this.timeLapse.paused = !this.timeLapse.paused;
+    sound.playPop(this.timeLapse.paused ? 440 : 554.37);
+    this.emit();
+  }
+
+  public stopTimeLapse(emitUpdate = true): void {
+    const wasActive = this.timeLapse.active;
+    this.timeLapse.active = false;
+    this.timeLapse.paused = false;
+    this.timeLapse.queue = [];
+    this.timeLapse.currentIndex = 0;
+
+    if (wasActive && this.builtWorld) {
+      for (const isl of this.builtWorld.islands) {
+        isl.meshGroup.visible = true;
+      }
+      for (const br of this.builtWorld.bridges) {
+        br.meshGroup.visible = true;
+      }
+      for (const v of this.villagers) {
+        v.root.visible = true;
+        v.spawnScale = 1;
+        v.root.scale.setScalar(1);
+      }
+    }
+    if (emitUpdate) {
+      this.emit();
+    }
+  }
+
+  private stepTimeLapse(dt: number): void {
+    if (!this.timeLapse.active || this.timeLapse.paused || !this.builtWorld) return;
+
+    this.timeLapse.stepTimer -= dt;
+    if (this.timeLapse.stepTimer > 0) return;
+
+    const idx = this.timeLapse.currentIndex;
+    if (idx >= this.timeLapse.queue.length) {
+      // Hold final completed state briefly, then exit replay mode keeping everything visible
+      this.timeLapse.active = false;
+      sound.playRepoLoaded();
+      this.cb.onToast(
+        `Time-lapse complete — ${this.villagers.length} commits materialized across ${this.builtWorld.islands.length} islands!`,
+      );
+      this.emit();
+      return;
+    }
+
+    const v = this.timeLapse.queue[idx];
+    const branchName = v.island.branch.name;
+
+    // Reveal side branch island + its uphill fork bridge as soon as its first commit lands!
+    if (!this.timeLapse.revealedBranches.has(branchName)) {
+      this.timeLapse.revealedBranches.add(branchName);
+      v.island.meshGroup.visible = true;
+      for (const br of this.builtWorld.bridges) {
+        if (br.kind === 'fork' && br.toBranch === branchName) {
+          br.meshGroup.visible = true;
+        }
+      }
+    }
+
+    // If this commit is a merge commit on main, reveal the downhill merge bridge(s) feeding into it!
+    if (v.commit.kind === 'merge' || v.commit.parents.length > 1) {
+      for (const isl of this.builtWorld.islands) {
+        if (isl.branch.mergeIntoSha === v.commit.sha) {
+          for (const br of this.builtWorld.bridges) {
+            if (br.kind === 'merge' && br.fromBranch === isl.branch.name) {
+              br.meshGroup.visible = true;
+            }
+          }
+        }
+      }
+    }
+
+    v.root.visible = true;
+    v.spawnScale = 0.08;
+    v.root.scale.setScalar(0.08);
+    v.jumpVelocity = 6.5;
+    v.behavior = 'jump_joy';
+    v.behaviorTimer = 1.6;
+    const arch = computeCommitArchetype(v.commit);
+    this.triggerEmote(`c:${v.commit.sha}`, v, arch.emoji, 1.5);
+
+    const pitch = 440 * 2 ** (((idx % 10) * 1.5) / 12);
+    sound.playPop(Math.min(880, pitch));
+
+    this.timeLapse.currentIndex = idx + 1;
+    this.timeLapse.stepTimer =
+      this.timeLapse.currentIndex >= this.timeLapse.queue.length
+        ? 1.1
+        : this.timeLapse.stepInterval;
     this.emit();
   }
 
@@ -749,6 +992,8 @@ export class VillageEngine {
     graph: RepoVillageGraph,
     options: { preserveCamera?: boolean; focusGateOnLoad?: boolean } = {},
   ): void {
+    this.stopTimeLapse(false);
+    this.turntableOrbit.active = false;
     this.activeGraph = graph;
     this.lastLocalFingerprint = graph.isLocal ? computeLocalGraphFingerprint(graph) : '';
 
@@ -1137,6 +1382,27 @@ export class VillageEngine {
         `${graph.owner}/${graph.repo} (${graph.currentBranch}) — ${this.villagers.length} commits across ${graph.branches.length} islands`,
       );
 
+      // Fetch live GitHub Actions / Commit Status CI weather for the active branch HEAD
+      const headCommit = graph.branches[0]?.commits.at(-1);
+      if (headCommit) {
+        void fetchRepoCiWeather(
+          graph.owner,
+          graph.repo,
+          headCommit.sha,
+          this.cb.getGithubToken(),
+          controller.signal,
+        ).then((weather) => {
+          if (this.activeGraph !== graph || this.disposed) return;
+          graph.ciWeather = weather;
+          if (weather.status === 'failing' && this.timeOfDay !== 'storm') {
+            this.applyAtmosphere('storm');
+            this.cb.onToast(`⛈️ ${weather.summary} — storm clouds rolled in over HEAD!`);
+          } else {
+            this.emit();
+          }
+        });
+      }
+
       const recentToHydrate = this.villagers.slice(-8);
       void Promise.allSettled(
         recentToHydrate.map(async (v) => {
@@ -1367,7 +1633,9 @@ export class VillageEngine {
   private bindEvents(): void {
     const getAllHitBoxes = (): THREE.Object3D[] => {
       const boxes: THREE.Object3D[] = [];
-      for (const v of this.villagers) boxes.push(v.hitBox);
+      for (const v of this.villagers) {
+        if (v.root.visible) boxes.push(v.hitBox);
+      }
       for (const gv of this.gateVisitors) boxes.push(gv.hitBox);
       return boxes;
     };
@@ -1408,9 +1676,10 @@ export class VillageEngine {
         if (ent) {
           this.canvas.style.cursor = 'pointer';
           const cargo = getCommitCargoMetrics(ent.commit);
+          const arch = computeCommitArchetype(ent.commit);
           const clan = this.clanMap.get(ent.authorKey);
           const clanTag = clan ? `${clan.emblem} ${clan.initials} · ` : '';
-          this.hoverPill.textContent = `${clanTag}${ent.commit.shortSha} · ${cargo.filesCount} file${cargo.filesCount === 1 ? '' : 's'} · ${ent.commit.subject}`;
+          this.hoverPill.textContent = `${arch.emoji} ${arch.title} · ${clanTag}${ent.commit.shortSha} · ${cargo.filesCount}f · ${ent.commit.subject}`;
           this.hoverPill.style.left = `${e.clientX}px`;
           this.hoverPill.style.top = `${e.clientY}px`;
           this.hoverPill.hidden = false;
@@ -1717,6 +1986,14 @@ export class VillageEngine {
 
     for (let i = 0; i < count; i++) {
       const v = this.villagers[i];
+      if (!v.root.visible) continue;
+
+      if (v.spawnScale < 0.999) {
+        v.spawnScale += (1 - v.spawnScale) * Math.min(1, dt * 11.5);
+        if (v.spawnScale > 0.995) v.spawnScale = 1;
+        v.root.scale.setScalar(v.spawnScale);
+      }
+
       const isHovered = v === this.hoveredVillager;
       const isSelected = v === this.selectedVillager;
       const isKinHighlighted = Boolean(focusKinKey && v.authorKey === focusKinKey);
@@ -1813,6 +2090,7 @@ export class VillageEngine {
         for (let j = 0; j < count; j++) {
           if (j === i) continue;
           const other = this.villagers[j];
+          if (!other.root.visible) continue;
           if (Math.abs(other.root.position.y - v.root.position.y) > 1.3) continue;
 
           const toX = other.root.position.x - v.root.position.x;
@@ -2083,8 +2361,10 @@ export class VillageEngine {
       // 1. Villager <-> Villager solid body separation + bump & sidestep response
       for (let i = 0; i < count; i++) {
         const a = this.villagers[i];
+        if (!a.root.visible) continue;
         for (let j = i + 1; j < count; j++) {
           const b = this.villagers[j];
+          if (!b.root.visible) continue;
           if (Math.abs(a.root.position.y - b.root.position.y) > 1.25) continue;
 
           const bothOnBridge =
@@ -2387,14 +2667,70 @@ export class VillageEngine {
       if (this.builtWorld.animatedProps.fireflies) {
         this.builtWorld.animatedProps.fireflies.rotation.y = Math.sin(elapsed * 0.12) * 0.15;
       }
+      if (this.timeOfDay === 'storm' && this.builtWorld.animatedProps.stormGroup) {
+        const rain = this.builtWorld.animatedProps.rainLines;
+        if (rain) {
+          const attr = rain.geometry.getAttribute('position') as THREE.BufferAttribute;
+          const arr = attr.array as Float32Array;
+          const fall = dt * 26.0;
+          const windX = dt * 4.8;
+          for (let i = 0; i < arr.length; i += 6) {
+            arr[i] -= windX;
+            arr[i + 1] -= fall;
+            arr[i + 3] -= windX;
+            arr[i + 4] -= fall;
+            if (arr[i + 1] < -5) {
+              const resetY = 18 + Math.random() * 4;
+              arr[i + 1] = resetY;
+              arr[i + 4] = resetY - 1.15;
+              if (arr[i] < -40) {
+                arr[i] += 80;
+                arr[i + 3] += 80;
+              }
+            }
+          }
+          attr.needsUpdate = true;
+        }
+
+        this.lightningTimer -= dt;
+        if (this.lightningTimer <= 0) {
+          this.lightningFlash = 1.0;
+          this.lightningTimer = 4.2 + Math.random() * 4.8;
+        }
+        if (this.lightningFlash > 0) {
+          this.lightningFlash = Math.max(0, this.lightningFlash - dt * 5.2);
+          this.dirLight.intensity = 0.85 + this.lightningFlash * 2.6;
+          if (this.builtWorld.animatedProps.lightningBolt) {
+            const boltMat = this.builtWorld.animatedProps.lightningBolt
+              .material as THREE.MeshBasicMaterial;
+            boltMat.opacity = this.lightningFlash * 0.95;
+          }
+        }
+      }
     }
 
+    this.stepTimeLapse(dt);
     this.updateVillagers(dt, elapsed);
     this.updateGateAndVisitors(dt, elapsed);
     this.updateExplorerWalk(dt, elapsed);
     this.resolveCharacterCollisions(dt, false);
 
-    if (this.followVillager && this.selectedVillager && this.cameraMode === 'orbit') {
+    if (this.turntableOrbit.active && this.cameraMode === 'orbit') {
+      this.turntableOrbit.elapsed += dt;
+      const t = Math.min(1, this.turntableOrbit.elapsed / Math.max(0.5, this.turntableOrbit.duration));
+      // Smooth front-side sweeping hero arc (-0.72 rad -> +0.86 rad) so signs & villagers stay camera-facing!
+      const angle = -0.72 + t * 1.58;
+      const elevWave = Math.sin(t * Math.PI) * 1.6;
+      this.controls.target.lerp(this.turntableOrbit.lookAt, Math.min(1, dt * 8));
+      this.camera.position.set(
+        this.turntableOrbit.lookAt.x + Math.sin(angle) * this.turntableOrbit.radius,
+        this.turntableOrbit.height + elevWave,
+        this.turntableOrbit.lookAt.z + Math.cos(angle) * this.turntableOrbit.radius,
+      );
+      if (t >= 1) {
+        this.turntableOrbit.active = false;
+      }
+    } else if (this.followVillager && this.selectedVillager && this.cameraMode === 'orbit') {
       const targetLook = this.selectedVillager.root.position
         .clone()
         .add(new THREE.Vector3(0.8, 1.0, 0));

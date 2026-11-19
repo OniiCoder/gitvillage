@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { computeCommitArchetype } from '@/lib/archetypes';
 import type {
   CommitData,
   CommitKind,
@@ -442,10 +443,106 @@ function populateCargoRig(
   }
 }
 
+export function populateArchetypeGear(entity: VillagerEntity): void {
+  entity.archetypeGroup.clear();
+  const arch = computeCommitArchetype(entity.commit);
+
+  if (arch.propKind === 'flame_cape') {
+    // Flowing Crimson-Amber Friday Deployer Cape!
+    const capeMat = new THREE.MeshStandardMaterial({
+      color: 0xff5722,
+      emissive: 0xd9460f,
+      emissiveIntensity: 0.35,
+      roughness: 0.5,
+      side: THREE.DoubleSide,
+    });
+    const cape = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.52, 0.03), capeMat);
+    cape.position.set(0, 0.44, -0.26);
+    cape.rotation.x = 0.22;
+    const trim = new THREE.Mesh(
+      new THREE.BoxGeometry(0.44, 0.07, 0.036),
+      new THREE.MeshStandardMaterial({ color: 0xfbbf24, emissive: 0xf59e0b, emissiveIntensity: 0.4 }),
+    );
+    trim.position.set(0, -0.24, 0);
+    cape.add(trim);
+    entity.archetypeGroup.add(cape);
+  } else if (arch.propKind === 'wrecking_hammer') {
+    // Gleaming Golden Demolitionist Wrecking Hammer strapped across the top/side!
+    const goldMat = new THREE.MeshStandardMaterial({
+      color: 0xfbbf24,
+      emissive: 0xd97706,
+      emissiveIntensity: 0.32,
+      metalness: 0.65,
+      roughness: 0.25,
+    });
+    const shaft = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.024, 0.026, 0.62, 6),
+      new THREE.MeshStandardMaterial({ color: 0x451a03, roughness: 0.7 }),
+    );
+    shaft.position.set(0.28, 0.88, -0.14);
+    shaft.rotation.z = -0.35;
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.16, 0.3), goldMat);
+    head.position.set(0, 0.28, 0);
+    shaft.add(head);
+    entity.archetypeGroup.add(shaft);
+  } else if (arch.propKind === 'night_lantern') {
+    // Warm Glowing 3 AM Night Owl Lantern + Espresso Cup!
+    const lanternRod = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.015, 0.015, 0.34, 6),
+      new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.5 }),
+    );
+    lanternRod.position.set(0.28, 1.18, 0.14);
+    lanternRod.rotation.z = -0.5;
+    const lanternOrb = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.095, 0),
+      new THREE.MeshStandardMaterial({
+        color: 0xfef08a,
+        emissive: 0xfbbf24,
+        emissiveIntensity: 1.3,
+      }),
+    );
+    lanternOrb.position.set(0.37, 1.24, 0.14);
+    const mug = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.052, 0.045, 0.09, 8),
+      new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.35 }),
+    );
+    mug.position.set(-0.31, 0.44, 0.16);
+    entity.archetypeGroup.add(lanternRod, lanternOrb, mug);
+  } else if (arch.propKind === 'titan_crown') {
+    // Floating Golden Crown above headgear for Mega-Drop Titans!
+    const crown = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.17, 0.13, 0.11, 6, 1, true),
+      new THREE.MeshStandardMaterial({
+        color: 0xffd60a,
+        emissive: 0xd97706,
+        emissiveIntensity: 0.45,
+        metalness: 0.7,
+        roughness: 0.25,
+        side: THREE.DoubleSide,
+      }),
+    );
+    crown.position.set(0, 1.38, 0);
+    entity.archetypeGroup.add(crown);
+  } else if (arch.propKind === 'sniper_visor') {
+    // Precision Glowing Cyan Visor for One-Line Snipers!
+    const visor = new THREE.Mesh(
+      new THREE.BoxGeometry(0.42, 0.075, 0.06),
+      new THREE.MeshStandardMaterial({
+        color: 0x38bdf8,
+        emissive: 0x0ea5e9,
+        emissiveIntensity: 0.85,
+      }),
+    );
+    visor.position.set(0, 0.97, 0.235);
+    entity.archetypeGroup.add(visor);
+  }
+}
+
 export function refreshVillagerCargo(entity: VillagerEntity): void {
   const seed = hashString(entity.commit.sha);
   const metrics = getCommitCargoMetrics(entity.commit);
   populateCargoRig(entity.cargoGroup, metrics, seed, entity.commit.files);
+  populateArchetypeGear(entity);
   entity.burden = metrics.burden;
   entity.speed = (0.028 + ((seed % 16) / 1000)) * (1 - metrics.burden * 0.42);
 }
@@ -829,6 +926,9 @@ export function createVillagerEntity(
   attachHatAndTool(commit.kind, tunicColor, headGroup, rightArm, bodyGroup);
   bodyGroup.add(headGroup);
 
+  const archetypeGroup = new THREE.Group();
+  bodyGroup.add(archetypeGroup);
+
   // Persistent Contributor Clan Ring on ground
   const auraMat = new THREE.MeshBasicMaterial({
     color: new THREE.Color(tunicColor),
@@ -876,7 +976,9 @@ export function createVillagerEntity(
     leftLeg,
     rightLeg,
     cargoGroup,
+    archetypeGroup,
     burden,
+    spawnScale: 1,
     auraRing,
     filterBeam,
     hitBox,
@@ -903,6 +1005,7 @@ export function createVillagerEntity(
     emoteTimer: 0,
   };
 
+  populateArchetypeGear(entity);
   return entity;
 }
 

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use Illuminate\Support\Facades\Http;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
 
@@ -105,5 +106,42 @@ class VillagePageTest extends TestCase
             ->assertOk()
             ->assertSee('<meta name="posthog-key" content="phc_test_village_key" />', false)
             ->assertSee('<meta name="posthog-host" content="https://eu.i.posthog.com" />', false);
+    }
+
+    public function test_dynamic_opengraph_cards_and_readme_svg_badge_render(): void
+    {
+        Http::fake([
+            'https://api.github.com/repos/laravel/framework' => Http::response([
+                'name' => 'framework',
+                'owner' => ['login' => 'laravel'],
+                'description' => 'The Laravel Framework.',
+                'default_branch' => '13.x',
+                'stargazers_count' => 34200,
+                'language' => 'PHP',
+            ], 200),
+        ]);
+
+        $this->get('/gh/laravel/framework')
+            ->assertOk()
+            ->assertSee('/og/laravel/framework.png', false)
+            ->assertSee('name="twitter:card" content="summary_large_image"', false);
+
+        $defaultOg = $this->get('/og/default.png')->assertOk();
+        $this->assertSame('image/png', $defaultOg->headers->get('Content-Type'));
+        $defaultSize = getimagesizefromstring((string) $defaultOg->getContent());
+        $this->assertIsArray($defaultSize);
+        $this->assertSame(1200, $defaultSize[0]);
+        $this->assertSame(630, $defaultSize[1]);
+
+        $repoOg = $this->get('/og/laravel/framework.png')->assertOk();
+        $this->assertSame('image/png', $repoOg->headers->get('Content-Type'));
+        $repoSize = getimagesizefromstring((string) $repoOg->getContent());
+        $this->assertIsArray($repoSize);
+        $this->assertSame(1200, $repoSize[0]);
+        $this->assertSame(630, $repoSize[1]);
+
+        $badge = $this->get('/badge/laravel/framework.svg')->assertOk();
+        $this->assertStringContainsString('image/svg+xml', (string) $badge->headers->get('Content-Type'));
+        $this->assertStringContainsString('Explore laravel/framework in 3D', (string) $badge->getContent());
     }
 }

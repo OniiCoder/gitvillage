@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\LocalGitController;
+use App\Http\Controllers\SocialCardController;
 use App\Http\Controllers\VillageController;
 use App\Http\Middleware\EnsureLocalEnvironment;
 use Illuminate\Support\Facades\Route;
@@ -9,6 +10,14 @@ Route::get('/', [VillageController::class, 'index'])->name('village.index');
 Route::get('/gh/{owner}/{repo}', [VillageController::class, 'github'])
     ->where(['owner' => '[A-Za-z0-9_.-]+', 'repo' => '[A-Za-z0-9_.-]+'])
     ->name('village.github');
+
+Route::get('/og/default.png', [SocialCardController::class, 'defaultOg'])->name('og.default');
+Route::get('/og/{owner}/{repo}.png', [SocialCardController::class, 'repoOg'])
+    ->where(['owner' => '[A-Za-z0-9_.-]+', 'repo' => '[A-Za-z0-9_.-]+'])
+    ->name('og.repo');
+Route::get('/badge/{owner}/{repo}.svg', [SocialCardController::class, 'repoBadge'])
+    ->where(['owner' => '[A-Za-z0-9_.-]+', 'repo' => '[A-Za-z0-9_.-]+'])
+    ->name('badge.repo');
 
 Route::prefix('api')
     ->middleware(EnsureLocalEnvironment::class)

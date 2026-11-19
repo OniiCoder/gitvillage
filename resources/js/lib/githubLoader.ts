@@ -1,5 +1,11 @@
 import { classifyCommitKind } from './demoRepo';
-import type { BranchIslandData, CommitData, CommitFileChange, RepoVillageGraph } from '@/types/village';
+import type {
+  BranchIslandData,
+  CiWeatherInfo,
+  CommitData,
+  CommitFileChange,
+  RepoVillageGraph,
+} from '@/types/village';
 
 const BRANCH_PALETTE = ['#34d399', '#60a5fa', '#f472b6', '#fbbf24', '#a78bfa', '#fb923c'];
 
@@ -374,4 +380,119 @@ export async function hydrateCommitDetail(
   commit.stats = stats;
   commit.files = files;
   commit.patchesHydrated = true;
+}
+
+interface GhCheckRunsResponse {
+  total_count: number;
+  check_runs?: Array<{
+    name: string;
+    status: string;
+    conclusion: string | null;
+    html_url?: string;
+  }>;
+}
+
+interface GhCombinedStatusResponse {
+  state: string;
+  total_count: number;
+  statuses?: Array<{
+    state: string;
+    context?: string;
+    target_url?: string;
+  }>;
+}
+
+export async function fetchRepoCiWeather(
+  owner: string,
+  repo: string,
+  headSha: string,
+  token?: string,
+  userSignal?: AbortSignal,
+): Promise<CiWeatherInfo> {
+  const encOwner = encodeURIComponent(owner);
+  const encRepo = encodeURIComponent(repo);
+  const encSha = encodeURIComponent(headSha);
+
+  try {
+    const checks = await ghFetch<GhCheckRunsResponse>(
+      `/repos/${encOwner}/${encRepo}/commits/${encSha}/check-runs?per_page=30`,
+      token,
+      userSignal,
+    );
+
+    const runs = checks.check_runs ?? [];
+    if (runs.length > 0) {
+      let failing = 0;
+      let pending = 0;
+      let passing = 0;
+
+      for (const r of runs) {
+        if (r.status !== 'completed') {
+          pending++;
+        } else if (
+          r.conclusion === 'failure' ||
+          r.conclusion === 'timed_out' ||
+          r.conclusion === 'action_required' ||
+          r.conclusion === 'startup_failure'
+        ) {
+          failing++;
+        } else if (r.conclusion === 'success' || r.conclusion === 'neutral' || r.conclusion === 'skipped') {
+          passing++;
+        }
+      }
+
+      const htmlUrl = runs[0]?.html_url || `https://github.com/${owner}/${repo}/commit/${headSha}`;
+
+      if (failing > 0) {
+        return {
+          status: 'failing',
+          summary: `${failing} CI check${failing === 1 ? '' : 's'} failing`,
+          sha: headSha,
+          htmlUrl,
+        };
+      }
+      if (pending > 0) {
+        return {
+          status: 'pending',
+          summary: `${pending} CI check${pending === 1 ? '' : 's'} running`,
+          sha: headSha,
+          htmlUrl,
+        };
+      }
+      return {
+        status: 'passing',
+        summary: `${passing} CI check${passing === 1 ? '' : 's'} passing`,
+        sha: headSha,
+        htmlUrl,
+      };
+    }
+
+    // Fallback to combined commit status endpoint (CircleCI, Vercel, Buildkite, etc.)
+    const combined = await ghFetch<GhCombinedStatusResponse>(
+      `/repos/${encOwner}/${encRepo}/commits/${encSha}/status`,
+      token,
+      userSignal,
+    );
+    if ((combined.total_count ?? 0) > 0) {
+      const targetUrl =
+        combined.statuses?.[0]?.target_url || `https://github.com/${owner}/${repo}/commit/${headSha}`;
+      if (combined.state === 'failure' || combined.state === 'error') {
+        return { status: 'failing', summary: 'Commit status failing', sha: headSha, htmlUrl: targetUrl };
+      }
+      if (combined.state === 'pending') {
+        return { status: 'pending', summary: 'Commit checks pending', sha: headSha, htmlUrl: targetUrl };
+      }
+      if (combined.state === 'success') {
+        return { status: 'passing', summary: `${combined.total_count} status checks passing`, sha: headSha, htmlUrl: targetUrl };
+      }
+    }
+  } catch {
+    // Non-fatal: rate-limited or checks unavailable
+  }
+
+  return {
+    status: 'unknown',
+    summary: 'No CI checks reported',
+    sha: headSha,
+  };
 }

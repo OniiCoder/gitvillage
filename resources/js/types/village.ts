@@ -55,6 +55,15 @@ export interface BranchIslandData {
   mergeIntoSha?: string;
 }
 
+export type CiWeatherStatus = 'passing' | 'failing' | 'pending' | 'unknown';
+
+export interface CiWeatherInfo {
+  status: CiWeatherStatus;
+  summary: string;
+  sha?: string;
+  htmlUrl?: string;
+}
+
 export interface RepoVillageGraph {
   owner: string;
   repo: string;
@@ -68,12 +77,14 @@ export interface RepoVillageGraph {
   isLocal?: boolean;
   localPath?: string;
   gateVisitors?: GateVisitorFile[];
+  ciWeather?: CiWeatherInfo;
   branches: BranchIslandData[];
   commitsBySha: Map<string, CommitData>;
 }
 
 export interface IslandLayout {
   branch: BranchIslandData;
+  meshGroup: THREE.Group;
   center: THREE.Vector3;
   length: number;
   width: number;
@@ -97,6 +108,7 @@ export interface BridgeLayout {
   kind: 'fork' | 'merge';
   fromBranch: string;
   toBranch: string;
+  meshGroup: THREE.Group;
   curve: THREE.CatmullRomCurve3;
   traversalCurve: THREE.CatmullRomCurve3;
   entryPathT: number;
@@ -124,7 +136,9 @@ export interface VillagerEntity {
   leftLeg: THREE.Object3D;
   rightLeg: THREE.Object3D;
   cargoGroup: THREE.Group;
+  archetypeGroup: THREE.Group;
   burden: number;
+  spawnScale: number;
   auraRing: THREE.Mesh;
   filterBeam: THREE.Mesh;
   hitBox: THREE.Mesh;
@@ -183,8 +197,16 @@ export interface GateVisitorEntity {
   emoteTimer: number;
 }
 
-export type TimeOfDay = 'day' | 'sunset' | 'night';
+export type TimeOfDay = 'day' | 'sunset' | 'night' | 'storm';
 export type CameraMode = 'orbit' | 'walk';
+
+export interface TimeLapseState {
+  active: boolean;
+  paused: boolean;
+  currentIndex: number;
+  totalCommits: number;
+  currentCommit: CommitData | null;
+}
 
 export interface ShowcaseRepo {
   slug: string;
