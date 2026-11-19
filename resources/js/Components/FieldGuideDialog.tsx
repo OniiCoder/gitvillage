@@ -1,5 +1,6 @@
 import { useRef } from 'react';
 import { SfIcon } from '@/Components/SfIconSprite';
+import { trackEvent } from '@/lib/analytics';
 import { closeTopLayerDialog, useLightDismissDialog } from '@/lib/topLayer';
 
 export function FieldGuideDialog() {
@@ -82,7 +83,18 @@ export function FieldGuideDialog() {
         </p>
       </div>
 
-      <div className="dialog-footer">
+      <div className="dialog-footer dialog-footer-split">
+        <a
+          href="https://oniicode.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="guide-creator-link"
+          onClick={() => trackEvent('creator_link_clicked', { location: 'guide_dialog' })}
+        >
+          <span>Created by</span>
+          <strong>@oniicode</strong>
+          <SfIcon name="sf-arrow-up-right" size={11} />
+        </a>
         <button
           type="button"
           id="help-gotit-btn"

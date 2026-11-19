@@ -72,6 +72,9 @@ export type AnalyticsEventMap = {
   local_modal_opened: {
     local_server_enabled: boolean;
   };
+  creator_link_clicked: {
+    location: 'hud_footer' | 'guide_dialog';
+  };
 };
 
 /**

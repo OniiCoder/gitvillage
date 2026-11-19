@@ -7,7 +7,7 @@ import { FieldGuideDialog } from '@/Components/FieldGuideDialog';
 import { InspectorSheet } from '@/Components/InspectorSheet';
 import { extractDroppedRepoSource, LocalRepoDialog } from '@/Components/LocalRepoDialog';
 import { PresetsPopover } from '@/Components/PresetsPopover';
-import { SfIconSprite } from '@/Components/SfIconSprite';
+import { SfIcon, SfIconSprite } from '@/Components/SfIconSprite';
 import { SpatialTopbar } from '@/Components/SpatialTopbar';
 import { describeRepoForAnalytics, trackEvent } from '@/lib/analytics';
 import { createDemoRepoGraph } from '@/lib/demoRepo';
@@ -362,6 +362,22 @@ export default function VillageIndex({
         onRandomVillager={() => engineRef.current?.focusRandomVillager()}
         onResetOverview={() => engineRef.current?.flyToOverview()}
       />
+
+      {!directorMode && (
+        <footer className="creator-badge">
+          <a
+            href="https://oniicode.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="creator-link"
+            onClick={() => trackEvent('creator_link_clicked', { location: 'hud_footer' })}
+          >
+            <span className="creator-muted">Created by</span>
+            <strong className="creator-handle">@oniicode</strong>
+            <SfIcon name="sf-arrow-up-right" size={11} />
+          </a>
+        </footer>
+      )}
 
       <InspectorSheet
         selection={snapshot.selection}
