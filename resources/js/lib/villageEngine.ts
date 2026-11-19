@@ -1531,9 +1531,9 @@ export class VillageEngine {
     if (this.builtHeatmapWorld) {
       return 6000;
     }
-    const total = Math.max(1, this.villagers.length);
-    const interval = Math.max(0.16, Math.min(0.45, 11.0 / total));
-    return Math.round((total * interval + 1.4) * 1000);
+    const liveCount = Math.max(1, this.villagers.filter((v) => !v.commit.isGhost).length);
+    const interval = Math.max(0.22, Math.min(0.46, 10.5 / liveCount));
+    return Math.round((liveCount * interval + 2.35) * 1000);
   }
 
   public startTurntableOrbit(durationSec = 6.0): void {
@@ -1591,16 +1591,18 @@ export class VillageEngine {
     this.closeInspector();
     this.turntableOrbit.active = false;
 
-    const ordered = [...this.villagers].toSorted((a, b) => {
-      const ta = Date.parse(a.commit.timestamp) || 0;
-      const tb = Date.parse(b.commit.timestamp) || 0;
-      if (ta !== tb) return ta - tb;
-      if (b.commit.parents.includes(a.commit.sha)) return -1;
-      if (a.commit.parents.includes(b.commit.sha)) return 1;
-      return 0;
-    });
+    const ordered = this.villagers
+      .filter((v) => !v.commit.isGhost)
+      .toSorted((a, b) => {
+        const ta = Date.parse(a.commit.timestamp) || 0;
+        const tb = Date.parse(b.commit.timestamp) || 0;
+        if (ta !== tb) return ta - tb;
+        if (b.commit.parents.includes(a.commit.sha)) return -1;
+        if (a.commit.parents.includes(b.commit.sha)) return 1;
+        return 0;
+      });
 
-    const stepInterval = Math.max(0.16, Math.min(0.45, 11.0 / ordered.length));
+    const stepInterval = Math.max(0.22, Math.min(0.46, 10.5 / Math.max(1, ordered.length)));
     this.timeLapse = {
       active: true,
       paused: false,
@@ -1611,11 +1613,17 @@ export class VillageEngine {
       revealedBranches: new Set([this.builtWorld.islands[0]?.branch.name ?? 'main']),
     };
 
-    // Hide all villagers and side branch islands/bridges at t = 0
+    // Hide all live branch villagers and side branch islands/bridges at t = 0
     for (const v of this.villagers) {
+      if (v.commit.isGhost) continue;
       v.root.visible = false;
-      v.spawnScale = 0.05;
-      v.root.scale.setScalar(0.05);
+      v.spawnScale = 1;
+      v.root.scale.setScalar(1);
+      v.parachuteY = 0;
+      v.parachuteSpeed = 0;
+      v.parachuteFurl = 0;
+      v.parachuteGroup.visible = false;
+      v.landingRing.visible = false;
       v.activeBridge = undefined;
       v.behavior = 'stroll';
       const el = this.emoteElements.get(`c:${v.commit.sha}`);
@@ -1663,6 +1671,14 @@ export class VillageEngine {
         v.root.visible = true;
         v.spawnScale = 1;
         v.root.scale.setScalar(1);
+        v.parachuteY = 0;
+        v.parachuteSpeed = 0;
+        v.parachuteFurl = 0;
+        v.parachuteGroup.visible = false;
+        v.parachuteGroup.position.set(0, 0, 0);
+        v.parachuteGroup.scale.setScalar(1);
+        v.landingRing.visible = false;
+        v.bodyGroup.position.y = 0;
       }
     }
     if (emitUpdate) {
@@ -1678,11 +1694,16 @@ export class VillageEngine {
 
     const idx = this.timeLapse.currentIndex;
     if (idx >= this.timeLapse.queue.length) {
-      // Hold final completed state briefly, then exit replay mode keeping everything visible
+      // Wait until the final parachuting villager touches down & furls before concluding replay
+      if (this.timeLapse.queue.some((qv) => qv.parachuteY > 0.02)) {
+        this.timeLapse.stepTimer = 0.12;
+        return;
+      }
+      const landedCount = this.timeLapse.queue.length;
       this.timeLapse.active = false;
       sound.playRepoLoaded();
       this.cb.onToast(
-        `Time-lapse complete — ${this.villagers.length} commits materialized across ${this.builtWorld.islands.length} islands!`,
+        `🪂 Replay complete — ${landedCount} commits parachuted across ${this.builtWorld.islands.length} islands!`,
       );
       this.emit();
       return;
@@ -1691,7 +1712,7 @@ export class VillageEngine {
     const v = this.timeLapse.queue[idx];
     const branchName = v.island.branch.name;
 
-    // Reveal side branch island + its uphill fork bridge as soon as its first commit lands!
+    // Reveal side branch island + its uphill fork bridge as soon as its first commit parachutes in!
     if (!this.timeLapse.revealedBranches.has(branchName)) {
       this.timeLapse.revealedBranches.add(branchName);
       v.island.meshGroup.visible = true;
@@ -1715,22 +1736,45 @@ export class VillageEngine {
       }
     }
 
-    v.root.visible = true;
-    v.spawnScale = 0.08;
-    v.root.scale.setScalar(0.08);
-    v.jumpVelocity = 6.5;
-    v.behavior = 'jump_joy';
-    v.behaviorTimer = 1.6;
-    const arch = computeCommitArchetype(v.commit);
-    this.triggerEmote(`c:${v.commit.sha}`, v, arch.emoji, 1.5);
+    const reducedMotion =
+      typeof window !== 'undefined' &&
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
-    const pitch = 440 * 2 ** (((idx % 10) * 1.5) / 12);
-    sound.playPop(Math.min(880, pitch));
+    v.root.visible = true;
+    v.spawnScale = 1;
+    v.root.scale.setScalar(1);
+    this.syncVillagerWorldPosition(v);
+
+    if (reducedMotion) {
+      v.parachuteY = 0;
+      v.parachuteSpeed = 0;
+      v.parachuteFurl = 0;
+      v.parachuteGroup.visible = false;
+      v.behavior = 'stroll';
+      v.behaviorTimer = 2.4;
+      const arch = computeCommitArchetype(v.commit);
+      this.triggerEmote(`c:${v.commit.sha}`, v, arch.emoji, 1.6);
+      sound.playCelebrationChime(idx, v.commit.kind);
+    } else {
+      const startAlt = 8.4 + (idx % 3) * 1.1;
+      v.parachuteY = startAlt;
+      v.parachuteSpeed = 6.5;
+      v.parachuteFurl = 0;
+      v.parachuteGroup.visible = true;
+      v.parachuteGroup.position.set(0, 0, 0);
+      v.parachuteGroup.scale.setScalar(0.2);
+      v.landingRing.visible = false;
+      v.jumpY = 0;
+      v.jumpVelocity = 0;
+      v.bodyGroup.position.y = startAlt;
+      this.triggerEmote(`c:${v.commit.sha}`, v, '🪂', 1.45);
+      sound.playParachuteDeploy(idx);
+    }
 
     this.timeLapse.currentIndex = idx + 1;
     this.timeLapse.stepTimer =
       this.timeLapse.currentIndex >= this.timeLapse.queue.length
-        ? 1.1
+        ? 0.45
         : this.timeLapse.stepInterval;
     this.emit();
   }
@@ -3319,6 +3363,10 @@ export class VillageEngine {
       if (isSelected || isKinHighlighted) {
         const pulse = 1 + Math.sin(elapsed * 5) * 0.11;
         v.auraRing.scale.setScalar(pulse);
+      } else if (v.parachuteY > 0) {
+        // Drop-zone ground target ring grows as the parachutist nears the island!
+        const altFrac = Math.min(1, v.parachuteY / 9.5);
+        v.auraRing.scale.setScalar(0.42 + (1 - altFrac) * 0.65);
       } else {
         v.auraRing.scale.setScalar(1);
       }
@@ -3331,7 +3379,8 @@ export class VillageEngine {
             el.hidden = true;
           } else {
             this.projVec.copy(v.root.position);
-            this.projVec.y += 1.85 + v.jumpY;
+            this.projVec.y +=
+              1.85 + v.jumpY + v.parachuteY + (v.parachuteY > 0 ? 1.05 : 0);
             this.projVec.project(this.camera);
             if (this.projVec.z < 1) {
               el.style.left = `${(this.projVec.x * 0.5 + 0.5) * window.innerWidth}px`;
@@ -3341,6 +3390,79 @@ export class VillageEngine {
               el.hidden = true;
             }
           }
+        }
+      }
+
+      // Animate post-touchdown canopy furl + expanding celebration landing ring!
+      if (v.parachuteFurl > 0) {
+        v.parachuteFurl += dt / 0.42;
+        const ringMat = v.landingRing.material as THREE.MeshBasicMaterial;
+        if (v.parachuteFurl >= 1) {
+          v.parachuteFurl = 0;
+          v.parachuteGroup.visible = false;
+          v.parachuteGroup.position.set(0, 0, 0);
+          v.parachuteGroup.scale.setScalar(1);
+          v.landingRing.visible = false;
+          ringMat.opacity = 0;
+        } else {
+          const p = v.parachuteFurl;
+          const ease = 1 - (1 - p) * (1 - p);
+          v.parachuteGroup.scale.set(
+            Math.max(0.05, 1 - ease * 0.88),
+            1 + ease * 0.28,
+            Math.max(0.05, 1 - ease * 0.88),
+          );
+          v.parachuteGroup.position.y = ease * 0.72;
+          v.landingRing.visible = true;
+          v.landingRing.scale.setScalar(0.55 + ease * 1.75);
+          ringMat.opacity = (1 - p) * 0.88;
+        }
+      }
+
+      // Airborne Parachute Sky-Drop Descent!
+      if (v.parachuteY > 0) {
+        this.syncVillagerWorldPosition(v);
+        v.parachuteY -= v.parachuteSpeed * dt;
+
+        if (v.parachuteY <= 0) {
+          // Touchdown on the floating island! Furl canopy, ripple ring, bounce & chime!
+          v.parachuteY = 0;
+          v.parachuteSpeed = 0;
+          v.parachuteFurl = 0.001;
+          v.jumpY = 0;
+          v.jumpVelocity = 5.6 * (1 - v.burden * 0.25);
+          v.behavior = 'jump_joy';
+          v.behaviorTimer = 2.1;
+          v.bodyGroup.position.y = 0;
+          v.bodyGroup.rotation.z = 0;
+          v.parachuteGroup.rotation.z = 0;
+
+          const celebrationEmotes =
+            v.commit.kind === 'merge'
+              ? ['🎊', '👑', '🎉']
+              : ['🎉', '🥳', computeCommitArchetype(v.commit).emoji];
+          const pick = celebrationEmotes[i % celebrationEmotes.length];
+          this.triggerEmote(`c:${v.commit.sha}`, v, pick, 2.1);
+          sound.playCelebrationChime(i, v.commit.kind);
+        } else {
+          const openScale = Math.min(1, 0.25 + Math.max(0, 9.6 - v.parachuteY) * 0.65);
+          v.parachuteGroup.visible = true;
+          v.parachuteGroup.scale.setScalar(openScale);
+
+          const pendulum = Math.sin(elapsed * 4.4 + v.phaseOffset) * 0.16;
+          const kick = Math.sin(elapsed * 11.5 + v.phaseOffset);
+          v.bodyGroup.position.y = v.parachuteY;
+          v.bodyGroup.rotation.z = pendulum;
+          v.bodyGroup.rotation.x = 0.06;
+          v.bodyGroup.rotation.y = Math.sin(elapsed * 1.8 + v.phaseOffset) * 0.35;
+          v.parachuteGroup.rotation.z = -pendulum * 0.35;
+          v.headGroup.rotation.x = -0.18; // peeking cheerfully down at the island!
+          v.leftArm.rotation.x = -2.85;
+          v.rightArm.rotation.x = -2.85;
+          v.leftLeg.rotation.x = kick * 0.38;
+          v.rightLeg.rotation.x = -kick * 0.38;
+          v.cargoGroup.position.y = 0.36;
+          continue;
         }
       }
 
@@ -3667,10 +3789,10 @@ export class VillageEngine {
       // 1. Villager <-> Villager solid body separation + bump & sidestep response
       for (let i = 0; i < count; i++) {
         const a = this.villagers[i];
-        if (!a.root.visible) continue;
+        if (!a.root.visible || a.parachuteY > 0) continue;
         for (let j = i + 1; j < count; j++) {
           const b = this.villagers[j];
-          if (!b.root.visible) continue;
+          if (!b.root.visible || b.parachuteY > 0) continue;
           if (Math.abs(a.root.position.y - b.root.position.y) > 1.25) continue;
 
           const bothOnBridge =

@@ -516,6 +516,75 @@ class CozySoundEngine {
       osc.stop(now + 0.48);
     });
   }
+
+  public playParachuteDeploy(stepIdx = 0): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    // Gentle airy silk canopy pop + upward whistle
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const base = 370 + (stepIdx % 5) * 28;
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(base, now);
+    osc.frequency.exponentialRampToValueAtTime(base * 1.48, now + 0.075);
+    gain.gain.setValueAtTime(0.022, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.085);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.09);
+  }
+
+  public playCelebrationChime(stepIdx = 0, kind = 'feat'): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+
+    // Sparkling D-major9 / Lydian celesta celebration ladder
+    const ladder = [587.33, 659.25, 739.99, 880.0, 987.77, 1108.73, 1174.66, 1318.51];
+    const rootIdx = stepIdx % 5;
+    const notes =
+      kind === 'merge'
+        ? [587.33, 739.99, 880.0, 1174.66, 1479.98]
+        : [ladder[rootIdx], ladder[rootIdx + 1], ladder[rootIdx + 3]];
+
+    const panner = ctx.createStereoPanner?.();
+    if (panner) {
+      panner.pan.setValueAtTime(((stepIdx % 5) - 2) * 0.22, ctx.currentTime);
+      panner.connect(ctx.destination);
+    }
+    const out: AudioNode = panner ?? ctx.destination;
+
+    notes.forEach((freq, idx) => {
+      const when = ctx.currentTime + idx * 0.048;
+      const fund = ctx.createOscillator();
+      const bell = ctx.createOscillator();
+      const fGain = ctx.createGain();
+      const bGain = ctx.createGain();
+
+      fund.type = 'triangle';
+      fund.frequency.setValueAtTime(freq, when);
+
+      bell.type = 'sine';
+      bell.frequency.setValueAtTime(freq * 2.0, when);
+
+      const peak = idx === notes.length - 1 ? 0.058 : 0.044;
+      fGain.gain.setValueAtTime(0.0001, when);
+      fGain.gain.linearRampToValueAtTime(peak, when + 0.008);
+      fGain.gain.exponentialRampToValueAtTime(0.0001, when + 0.34);
+
+      bGain.gain.setValueAtTime(0.0001, when);
+      bGain.gain.linearRampToValueAtTime(peak * 0.35, when + 0.005);
+      bGain.gain.exponentialRampToValueAtTime(0.0001, when + 0.16);
+
+      fund.connect(fGain).connect(out);
+      bell.connect(bGain).connect(out);
+      fund.start(when);
+      bell.start(when);
+      fund.stop(when + 0.36);
+      bell.stop(when + 0.18);
+    });
+  }
 }
 
 export const sound = new CozySoundEngine();

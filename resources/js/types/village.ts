@@ -246,10 +246,15 @@ export interface VillagerEntity {
   rightLeg: THREE.Object3D;
   cargoGroup: THREE.Group;
   archetypeGroup: THREE.Group;
+  parachuteGroup: THREE.Group;
+  landingRing: THREE.Mesh;
   coAuthorGroup?: THREE.Group;
   portalRing?: THREE.Object3D;
   burden: number;
   spawnScale: number;
+  parachuteY: number;
+  parachuteSpeed: number;
+  parachuteFurl: number;
   auraRing: THREE.Mesh;
   filterBeam: THREE.Mesh;
   hitBox: THREE.Mesh;

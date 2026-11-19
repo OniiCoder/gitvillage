@@ -25,7 +25,7 @@ export function TimeLapseBar({
       <div className="timelapse-top-row">
         <div className="timelapse-meta">
           <span className="timelapse-counter">
-            Commit {timeLapse.currentIndex} / {timeLapse.totalCommits}
+            🪂 Parachute Drop {timeLapse.currentIndex} / {timeLapse.totalCommits}
           </span>
           {commit && arch && (
             <span className="timelapse-commit-line" title={commit.subject}>

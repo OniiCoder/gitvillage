@@ -254,6 +254,90 @@ const bandAddMat = new THREE.MeshStandardMaterial({ color: 0x30d158, roughness: 
 const bandDelMat = new THREE.MeshStandardMaterial({ color: 0xff453a, roughness: 0.5 });
 const bandModMat = new THREE.MeshStandardMaterial({ color: 0x0a84ff, roughness: 0.5 });
 
+// Shared 8-gore Low-Poly Striped Parachute Geometries & Materials
+const parachuteGoreGeos = Array.from({ length: 8 }, (_, idx) =>
+  new THREE.SphereGeometry(0.96, 2, 5, idx * (Math.PI / 4), Math.PI / 4, 0, Math.PI * 0.46),
+);
+const parachuteCapGeo = new THREE.CylinderGeometry(0.08, 0.16, 0.08, 8);
+const parachuteRimGeo = new THREE.TorusGeometry(0.95, 0.025, 6, 8);
+const parachuteCordGeo = new THREE.CylinderGeometry(0.012, 0.012, 1, 5);
+const landingRippleGeo = new THREE.RingGeometry(0.32, 0.48, 22);
+landingRippleGeo.rotateX(-Math.PI / 2);
+
+const parachuteCreamMat = new THREE.MeshStandardMaterial({
+  color: 0xfffbeb,
+  roughness: 0.55,
+  flatShading: true,
+  side: THREE.DoubleSide,
+});
+const parachuteGoldCapMat = new THREE.MeshStandardMaterial({
+  color: 0xfbbf24,
+  emissive: 0xf59e0b,
+  emissiveIntensity: 0.25,
+  roughness: 0.35,
+  metalness: 0.35,
+});
+const parachuteCordMat = new THREE.MeshStandardMaterial({
+  color: 0xf8fafc,
+  roughness: 0.6,
+});
+
+function buildParachuteGroup(tunicColor: number): THREE.Group {
+  const grp = new THREE.Group();
+  grp.visible = false;
+
+  const clanCanopyMat = new THREE.MeshStandardMaterial({
+    color: tunicColor,
+    emissive: tunicColor,
+    emissiveIntensity: 0.14,
+    roughness: 0.5,
+    flatShading: true,
+    side: THREE.DoubleSide,
+  });
+
+  const domeCenterY = 1.62;
+  for (let g = 0; g < 8; g++) {
+    const gore = new THREE.Mesh(
+      parachuteGoreGeos[g],
+      g % 2 === 0 ? clanCanopyMat : parachuteCreamMat,
+    );
+    gore.position.y = domeCenterY;
+    gore.castShadow = true;
+    grp.add(gore);
+  }
+
+  const apexCap = new THREE.Mesh(parachuteCapGeo, parachuteGoldCapMat);
+  apexCap.position.y = domeCenterY + 0.96;
+  grp.add(apexCap);
+
+  const rim = new THREE.Mesh(parachuteRimGeo, parachuteGoldCapMat);
+  rim.rotation.x = Math.PI / 2;
+  rim.position.y = domeCenterY + 0.96 * Math.cos(Math.PI * 0.46);
+  grp.add(rim);
+
+  // 4 taut parachute cords from canopy skirt corners down to raised villager hands!
+  const skirtY = domeCenterY + 0.96 * Math.cos(Math.PI * 0.46);
+  const cordPairs: Array<[THREE.Vector3, THREE.Vector3]> = [
+    [new THREE.Vector3(-0.67, skirtY, 0.67), new THREE.Vector3(-0.27, 0.9, 0.06)],
+    [new THREE.Vector3(-0.67, skirtY, -0.67), new THREE.Vector3(-0.27, 0.9, -0.05)],
+    [new THREE.Vector3(0.67, skirtY, 0.67), new THREE.Vector3(0.27, 0.9, 0.06)],
+    [new THREE.Vector3(0.67, skirtY, -0.67), new THREE.Vector3(0.27, 0.9, -0.05)],
+  ];
+  const upVec = new THREE.Vector3(0, 1, 0);
+  for (const [topPt, handPt] of cordPairs) {
+    const delta = new THREE.Vector3().subVectors(topPt, handPt);
+    const len = delta.length();
+    const mid = new THREE.Vector3().addVectors(topPt, handPt).multiplyScalar(0.5);
+    const cord = new THREE.Mesh(parachuteCordGeo, parachuteCordMat);
+    cord.scale.set(1, len, 1);
+    cord.position.copy(mid);
+    cord.quaternion.setFromUnitVectors(upVec, delta.normalize());
+    grp.add(cord);
+  }
+
+  return grp;
+}
+
 export interface CargoMetrics {
   filesCount: number;
   additions: number;
@@ -929,6 +1013,9 @@ export function createVillagerEntity(
   const archetypeGroup = new THREE.Group();
   bodyGroup.add(archetypeGroup);
 
+  const parachuteGroup = buildParachuteGroup(tunicColor);
+  bodyGroup.add(parachuteGroup);
+
   // Co-Authored-By Tandem Buddy Villager strolling shoulder-to-shoulder!
   let coAuthorGroup: THREE.Group | undefined;
   if (commit.coAuthors && commit.coAuthors.length > 0 && !commit.isGhost) {
@@ -1049,6 +1136,19 @@ export function createVillagerEntity(
   hitBox.userData.commitSha = commit.sha;
   root.add(hitBox);
 
+  const landingRingMat = new THREE.MeshBasicMaterial({
+    color: new THREE.Color(tunicColor).lerp(new THREE.Color(0xfef08a), 0.45),
+    transparent: true,
+    opacity: 0,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const landingRing = new THREE.Mesh(landingRippleGeo, landingRingMat);
+  landingRing.position.y = 0.055;
+  landingRing.visible = false;
+  root.add(landingRing);
+
   const pathT = totalOnIsland <= 1 ? 0.5 : 0.08 + (indexOnIsland / (totalOnIsland - 1)) * 0.84;
   const baseLane = ((indexOnIsland % 3) - 1) * 0.54;
   const homePos = island.pathCurve.getPointAt(Math.min(1, Math.max(0, pathT)));
@@ -1068,10 +1168,15 @@ export function createVillagerEntity(
     rightLeg,
     cargoGroup,
     archetypeGroup,
+    parachuteGroup,
+    landingRing,
     coAuthorGroup,
     portalRing,
     burden,
     spawnScale: 1,
+    parachuteY: 0,
+    parachuteSpeed: 0,
+    parachuteFurl: 0,
     auraRing,
     filterBeam,
     hitBox,
