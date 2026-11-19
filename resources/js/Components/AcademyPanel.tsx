@@ -264,6 +264,9 @@ export function AcademyPanel({
                 Run
               </button>
             </form>
+            <div className="academy-sandbox-note">
+              <span aria-hidden="true">🔒</span> 100% in-browser sandbox — nothing is saved to disk or pushed anywhere.
+            </div>
           </div>
         </>
       )}

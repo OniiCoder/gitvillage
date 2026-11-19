@@ -338,7 +338,7 @@ export function compileAcademyGraph(state: AcademySandboxState): RepoVillageGrap
     stars: 100,
     isDemo: false,
     isLocal: true, // Always build the 3D Village Gate + Staging Queue in Academy Mode!
-    localPath: '~/gitvillage-academy',
+    isAcademy: true,
     gateVisitors: state.gateFiles,
     mergeConflict: state.mergeConflict,
     tags: state.tags,
@@ -1280,7 +1280,35 @@ export function executeFreeformGitCommand(
     return { next, output: out, focusHint: 'bisect' };
   }
 
-  const out = `Executed '${cmd}' — try 'help' to see all supported 3D Git commands.`;
+  if (/^git\s+reset\s+--hard(?:\s+HEAD~1)?\b/i.test(cmd)) {
+    const curBr = next.currentBranch;
+    const headSha = next.branchHeads[curBr];
+    const headCommit = headSha ? next.commits.find((c) => c.sha === headSha) : undefined;
+    if (!headCommit || headCommit.parents.length === 0) {
+      const out = 'Already at initial commit — add another commit before testing git reset --hard.';
+      appendLog(next, cmd, out, true);
+      return { next, output: out, isError: true };
+    }
+    next.branchHeads[curBr] = headCommit.parents[0];
+    next.ghostCommits.unshift({
+      ...headCommit,
+      branch: 'ghost-ruins',
+      isGhost: true,
+      reflogAction: 'reset --hard HEAD~1',
+    });
+    next.gateFiles = [];
+    const out = `HEAD is now at ${headCommit.parents[0].slice(0, 7)} (${headCommit.shortSha} moved to in-memory Reflog Ghost Ruins)`;
+    appendLog(next, cmd, out);
+    return { next, output: out, focusHint: 'ghosts' };
+  }
+
+  if (/^git\s+(?:push|pull|fetch|remote|clone)\b/i.test(cmd)) {
+    const out = `Sandbox simulated '${cmd}' on '${next.currentBranch}' — 100% in-browser RAM (nothing is ever pushed or written to disk).`;
+    appendLog(next, cmd, out);
+    return { next, output: out, focusHint: 'overview' };
+  }
+
+  const out = `Executed '${cmd}' in memory — try 'help' to see all supported 3D Git commands.`;
   appendLog(next, cmd, out);
   return { next, output: out };
 }

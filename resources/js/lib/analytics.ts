@@ -283,6 +283,9 @@ export function describeRepoForAnalytics(graph: RepoVillageGraph): {
   repo_type: 'demo' | 'github' | 'local';
   repo_slug: string;
 } {
+  if (graph.isAcademy) {
+    return { repo_type: 'demo', repo_slug: 'gitvillage/git-academy' };
+  }
   if (graph.isDemo) {
     return { repo_type: 'demo', repo_slug: 'gitvillage/sky-village' };
   }

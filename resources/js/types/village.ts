@@ -164,6 +164,7 @@ export interface RepoVillageGraph {
   stars: number;
   isDemo?: boolean;
   isLocal?: boolean;
+  isAcademy?: boolean;
   localPath?: string;
   gateVisitors?: GateVisitorFile[];
   ciWeather?: CiWeatherInfo;

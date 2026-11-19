@@ -1792,6 +1792,25 @@ export class VillageEngine {
       checkout_git_head: Boolean(options.checkoutGitHead),
     });
 
+    if (this.academyActive || this.activeGraph.isAcademy) {
+      if (this.academySandbox && this.academySandbox.branchOrder.includes(target)) {
+        this.academySandbox = {
+          ...this.academySandbox,
+          currentBranch: target,
+        };
+        this.applyAcademyStateToWorld('overview');
+      }
+      const flew = this.flyToBranchIsland(target);
+      if (flew) {
+        const count =
+          this.activeGraph.branches.find((b) => b.name === target)?.commits.length ?? 0;
+        this.cb.onToast(
+          `Sandbox branch "${target}" — ${count} commit${count === 1 ? '' : 's'} on island`,
+        );
+      }
+      return;
+    }
+
     if (this.activeGraph.isDemo) {
       const flew = this.flyToBranchIsland(target);
       if (flew) {
@@ -2031,7 +2050,14 @@ export class VillageEngine {
 
   private async hydrateSelectedCommitIfNeeded(v: VillagerEntity): Promise<void> {
     const commit = v.commit;
-    if (commit.patchesHydrated || this.activeGraph.isDemo) return;
+    if (
+      commit.patchesHydrated ||
+      this.activeGraph.isDemo ||
+      this.academyActive ||
+      this.activeGraph.isAcademy
+    ) {
+      return;
+    }
     if (this.activeGraph.isLocal && (!this.cb.localServerEnabled || !this.activeGraph.localPath)) {
       return;
     }

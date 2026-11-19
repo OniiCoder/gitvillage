@@ -54,6 +54,7 @@ export function BranchSwitcher({
     : uniqueBranches;
 
   const canCheckoutOnDisk =
+    !graph.isAcademy &&
     Boolean(graph.isLocal && localServerEnabled && graph.localPath) &&
     Boolean(graph.headBranch && graph.headBranch !== 'detached-HEAD');
 
@@ -98,11 +99,13 @@ export function BranchSwitcher({
           <div>
             <h3>Branches ({uniqueBranches.length})</h3>
             <span className="section-caption">
-              {graph.isDemo
-                ? 'Fly between floating branch islands'
-                : canCheckoutOnDisk
-                  ? `HEAD on disk: ${graph.headBranch}`
-                  : `Default branch: ${graph.defaultBranch}`}
+              {graph.isAcademy
+                ? 'Switch between 3D sandbox branch islands'
+                : graph.isDemo
+                  ? 'Fly between floating branch islands'
+                  : canCheckoutOnDisk
+                    ? `HEAD on disk: ${graph.headBranch}`
+                    : `Default branch: ${graph.defaultBranch}`}
             </span>
           </div>
         </div>

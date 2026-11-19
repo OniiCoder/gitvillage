@@ -3886,6 +3886,13 @@
     padding: 0.52rem 0.62rem;
   }
 
+  .academy-sandbox-note {
+    font-size: 0.68rem;
+    line-height: 1.3;
+    color: var(--ink-tertiary);
+    padding-block-start: 0.12rem;
+  }
+
   .academy-terminal-log {
     display: flex;
     flex-direction: column;
