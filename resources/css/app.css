@@ -2669,16 +2669,9 @@
     .dock-segments {
       inline-size: 100%;
       min-inline-size: 0;
-      overflow-x: auto;
-      scrollbar-width: none;
-      scroll-snap-type: x proximity;
-      justify-content: safe center;
-      gap: 0.14rem;
-      padding: 2px;
-    }
-
-    .dock-segments::-webkit-scrollbar {
-      display: none;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 0.16rem 0.12rem;
     }
 
     .dock-quick-actions {
@@ -2749,12 +2742,11 @@
     }
 
     .filter-pill {
-      min-block-size: 1.9rem;
-      padding-inline: 0.48rem;
-      font-size: 0.73rem;
-      gap: 0.25rem;
+      min-block-size: 1.85rem;
+      padding-inline: 0.38rem;
+      font-size: 0.71rem;
+      gap: 0.22rem;
       flex: 0 0 auto;
-      scroll-snap-align: start;
     }
 
     .dock-action-btn {
