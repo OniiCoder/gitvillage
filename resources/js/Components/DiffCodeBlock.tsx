@@ -1,5 +1,14 @@
 export interface ParsedDiffLine {
-  type: 'hunk' | 'add' | 'del' | 'context' | 'meta';
+  type:
+    | 'hunk'
+    | 'add'
+    | 'del'
+    | 'context'
+    | 'meta'
+    | 'conflict-ours'
+    | 'conflict-base'
+    | 'conflict-sep'
+    | 'conflict-theirs';
   oldNumber: number | null;
   newNumber: number | null;
   sigil: string;
@@ -27,6 +36,54 @@ export function parseUnifiedPatch(patch: string): ParsedDiffLine[] {
         newNumber: null,
         sigil: '@@',
         content: raw,
+      });
+      continue;
+    }
+
+    if (raw.startsWith('<<<<<<<')) {
+      inHunk = true;
+      parsed.push({
+        type: 'conflict-ours',
+        oldNumber: null,
+        newNumber: null,
+        sigil: '≪',
+        content: `${raw}  (Ours / Current)`,
+      });
+      continue;
+    }
+
+    if (raw.startsWith('|||||||')) {
+      inHunk = true;
+      parsed.push({
+        type: 'conflict-base',
+        oldNumber: null,
+        newNumber: null,
+        sigil: '‖',
+        content: `${raw}  (Common Ancestor)`,
+      });
+      continue;
+    }
+
+    if (raw.startsWith('=======')) {
+      inHunk = true;
+      parsed.push({
+        type: 'conflict-sep',
+        oldNumber: null,
+        newNumber: null,
+        sigil: '⚔',
+        content: '=======  vs Incoming Branch',
+      });
+      continue;
+    }
+
+    if (raw.startsWith('>>>>>>>')) {
+      inHunk = true;
+      parsed.push({
+        type: 'conflict-theirs',
+        oldNumber: null,
+        newNumber: null,
+        sigil: '≫',
+        content: `${raw}  (Theirs / Incoming)`,
       });
       continue;
     }
@@ -115,7 +172,11 @@ export function DiffCodeBlock({
 
   const lines = parseUnifiedPatch(trimmed);
   const hasStructuredHunk = lines.some(
-    (l) => l.type === 'hunk' || l.type === 'add' || l.type === 'del',
+    (l) =>
+      l.type === 'hunk' ||
+      l.type === 'add' ||
+      l.type === 'del' ||
+      l.type === 'conflict-ours',
   );
 
   if (!hasStructuredHunk) {
@@ -134,11 +195,15 @@ export function DiffCodeBlock({
     >
       <div className="diff-code-lines">
         {lines.map((line, idx) => {
-          if (line.type === 'hunk' || line.type === 'meta') {
+          if (
+            line.type === 'hunk' ||
+            line.type === 'meta' ||
+            line.type.startsWith('conflict-')
+          ) {
             return (
               <div
                 key={idx}
-                className={`diff-row ${line.type === 'hunk' ? 'diff-row-hunk' : 'diff-row-meta'}`}
+                className={`diff-row diff-row-span diff-row-${line.type}`}
               >
                 <span className="diff-gutter diff-gutter-span" aria-hidden="true">
                   {line.sigil || '·'}

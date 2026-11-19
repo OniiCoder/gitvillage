@@ -1,9 +1,11 @@
+import { parseConflictMarkersFromText } from './conflictParser';
 import { classifyCommitKind } from './demoRepo';
 import type {
   BranchIslandData,
   CommitData,
   CommitFileChange,
   GateVisitorFile,
+  MergeConflictInfo,
   RepoVillageGraph,
 } from '@/types/village';
 
@@ -730,8 +732,18 @@ interface GitIndexEntry {
   mode: number;
 }
 
-function parseGitIndex(bytes: Uint8Array): Map<string, GitIndexEntry> {
-  const map = new Map<string, GitIndexEntry>();
+interface UnmergedIndexStages {
+  stage1?: string;
+  stage2?: string;
+  stage3?: string;
+}
+
+function parseGitIndex(bytes: Uint8Array): {
+  stageZero: Map<string, GitIndexEntry>;
+  unmerged: Map<string, UnmergedIndexStages>;
+} {
+  const stageZero = new Map<string, GitIndexEntry>();
+  const unmerged = new Map<string, UnmergedIndexStages>();
   if (
     bytes.byteLength < 12 ||
     bytes[0] !== 0x44 || // D
@@ -739,11 +751,11 @@ function parseGitIndex(bytes: Uint8Array): Map<string, GitIndexEntry> {
     bytes[2] !== 0x52 || // R
     bytes[3] !== 0x43 // C
   ) {
-    return map;
+    return { stageZero, unmerged };
   }
 
   const version = readUint32BE(bytes, 4);
-  if (version < 2 || version > 4) return map;
+  if (version < 2 || version > 4) return { stageZero, unmerged };
   const count = readUint32BE(bytes, 8);
 
   let pos = 12;
@@ -784,12 +796,19 @@ function parseGitIndex(bytes: Uint8Array): Map<string, GitIndexEntry> {
       pos = nul + 1 + pad;
     }
 
-    if (stage === 0 && filePath) {
-      map.set(filePath, { path: filePath, sha, fileSize, mode });
+    if (!filePath) continue;
+    if (stage === 0) {
+      stageZero.set(filePath, { path: filePath, sha, fileSize, mode });
+    } else {
+      const prev = unmerged.get(filePath) ?? {};
+      if (stage === 1) prev.stage1 = sha;
+      else if (stage === 2) prev.stage2 = sha;
+      else if (stage === 3) prev.stage3 = sha;
+      unmerged.set(filePath, prev);
     }
   }
 
-  return map;
+  return { stageZero, unmerged };
 }
 
 function compileGitignoreMatcher(rawIgnore: string | null): (relPath: string, isDir: boolean) => boolean {
@@ -1124,7 +1143,42 @@ export async function loadBrowserGitRepoVillage(
   }
 
   const store = new BrowserGitObjectStore(source);
-  const { currentBranch, headSha, branchTips } = await collectRefs(source);
+  const [{ currentBranch, headSha, branchTips }, mergeHeadBytes, mergeMsgBytes] = await Promise.all([
+    collectRefs(source),
+    source.readFile('.git/MERGE_HEAD'),
+    source.readFile('.git/MERGE_MSG'),
+  ]);
+
+  let mergeHeadSha: string | undefined;
+  let theirsBranch: string | undefined;
+  if (mergeHeadBytes) {
+    const firstLine = textDecoder.decode(mergeHeadBytes).trim().split(/\s+/)[0]?.toLowerCase();
+    if (firstLine && /^[0-9a-f]{40}$/.test(firstLine)) {
+      mergeHeadSha = firstLine;
+      if (mergeMsgBytes) {
+        const msgLine = textDecoder.decode(mergeMsgBytes).split(/\r?\n/)[0] ?? '';
+        const m = /Merge (?:remote-tracking )?branch '([^']+)'/.exec(msgLine);
+        if (m) {
+          let cand = m[1];
+          if (cand.startsWith('origin/') && branchTips.has(cand.slice(7))) {
+            cand = cand.slice(7);
+          }
+          theirsBranch = cand;
+        }
+      }
+      if (!theirsBranch) {
+        for (const [bName, bSha] of branchTips.entries()) {
+          if (bSha === mergeHeadSha && bName !== currentBranch) {
+            theirsBranch = bName;
+            break;
+          }
+        }
+      }
+      if (!theirsBranch) {
+        theirsBranch = mergeHeadSha.slice(0, 7);
+      }
+    }
+  }
 
   const allBranches = Array.from(branchTips.keys()).toSorted((a, b) =>
     a === currentBranch ? -1 : b === currentBranch ? 1 : a.localeCompare(b),
@@ -1134,11 +1188,13 @@ export async function loadBrowserGitRepoVillage(
       ? targetBranch
       : currentBranch || allBranches[0] || 'main';
 
-  // Order branches so activeBranch comes first (followed by currentBranch), up to 6 branches
+  // Order branches so activeBranch comes first (followed by theirsBranch if merging, then currentBranch), up to 6 branches
   const branchEntries = Array.from(branchTips.entries())
     .toSorted(([a], [b]) => {
       if (a === activeBranch) return -1;
       if (b === activeBranch) return 1;
+      if (theirsBranch && a === theirsBranch) return -1;
+      if (theirsBranch && b === theirsBranch) return 1;
       if (a === currentBranch) return -1;
       if (b === currentBranch) return 1;
       return a.localeCompare(b);
@@ -1313,17 +1369,78 @@ export async function loadBrowserGitRepoVillage(
     source.readFile('.gitignore'),
   ]);
 
-  const indexMap = indexBytes ? parseGitIndex(indexBytes) : new Map<string, GitIndexEntry>();
+  const parsedIndex = indexBytes
+    ? parseGitIndex(indexBytes)
+    : { stageZero: new Map<string, GitIndexEntry>(), unmerged: new Map<string, UnmergedIndexStages>() };
+  const indexMap = parsedIndex.stageZero;
+  const unmergedMap = parsedIndex.unmerged;
   const isIgnored = compileGitignoreMatcher(
     gitignoreBytes ? textDecoder.decode(gitignoreBytes) : null,
   );
 
   const gateVisitors: GateVisitorFile[] = [];
   const recordedPaths = new Set<string>();
+  const oursLabel = currentBranch || 'HEAD';
+  const incomingLabel = theirsBranch || 'incoming-branch';
+
+  // 0. Unmerged conflict stages (`1=base`, `2=ours`, `3=theirs`) in `.git/index`
+  for (const [filePath, stages] of unmergedMap) {
+    const workBytes = await source.readFile(filePath);
+    let parsedConflict =
+      workBytes && workBytes.byteLength <= 128_000 && !workBytes.subarray(0, 512).includes(0)
+        ? parseConflictMarkersFromText(textDecoder.decode(workBytes), oursLabel, incomingLabel)
+        : null;
+
+    if (!parsedConflict) {
+      const [s2Obj, s3Obj] = await Promise.all([
+        stages.stage2 ? store.readObject(stages.stage2) : Promise.resolve(null),
+        stages.stage3 ? store.readObject(stages.stage3) : Promise.resolve(null),
+      ]);
+      const oursText = s2Obj?.body
+        ? textDecoder.decode(s2Obj.body).split('\n').slice(0, 40).join('\n')
+        : '(deleted on HEAD)';
+      const theirsText = s3Obj?.body
+        ? textDecoder.decode(s3Obj.body).split('\n').slice(0, 40).join('\n')
+        : '(deleted on incoming branch)';
+      const oursLines = oursText.split('\n');
+      const theirsLines = theirsText.split('\n');
+      parsedConflict = {
+        conflict: {
+          oursLabel,
+          theirsLabel: incomingLabel,
+          oursContent: oursText,
+          theirsContent: theirsText,
+          conflictMarkersCount: 1,
+        },
+        diffPreview: [
+          `@@ -1,${oursLines.length} +1,${theirsLines.length} @@ Unmerged index stages`,
+          `<<<<<<< ${oursLabel}`,
+          ...oursLines.map((l) => `-${l}`),
+          '=======',
+          ...theirsLines.map((l) => `+${l}`),
+          `>>>>>>> ${incomingLabel}`,
+        ].join('\n'),
+        additions: Math.max(1, theirsLines.length),
+        deletions: Math.max(1, oursLines.length),
+      };
+    }
+
+    gateVisitors.push({
+      filename: filePath,
+      status: 'conflicted',
+      staged: false,
+      additions: parsedConflict.additions,
+      deletions: parsedConflict.deletions,
+      diffPreview: parsedConflict.diffPreview,
+      conflict: parsedConflict.conflict,
+    });
+    recordedPaths.add(filePath);
+  }
 
   // 1. Staged changes: compare HEAD tree against .git/index
   if (indexBytes) {
     for (const [filePath, idxEntry] of indexMap) {
+      if (recordedPaths.has(filePath)) continue;
       const headBlobSha = headTreeMap.get(filePath);
       if (!headBlobSha) {
         const newObj = await store.readObject(idxEntry.sha);
@@ -1356,7 +1473,7 @@ export async function loadBrowserGitRepoVillage(
     }
 
     for (const [filePath, headBlobSha] of headTreeMap) {
-      if (!indexMap.has(filePath)) {
+      if (!indexMap.has(filePath) && !recordedPaths.has(filePath)) {
         const oldObj = await store.readObject(headBlobSha);
         const est = estimateBlobDiff(oldObj?.body ?? null, null);
         gateVisitors.push({
@@ -1435,9 +1552,24 @@ export async function loadBrowserGitRepoVillage(
   }
 
   const sortedVisitors = gateVisitors.toSorted((a, b) => {
+    const aConf = a.status === 'conflicted';
+    const bConf = b.status === 'conflicted';
+    if (aConf !== bConf) return aConf ? -1 : 1;
     if (a.staged !== b.staged) return a.staged ? -1 : 1;
     return a.filename.localeCompare(b.filename);
   });
+
+  const conflictedCount = sortedVisitors.filter((v) => v.status === 'conflicted').length;
+  const mergeConflict: MergeConflictInfo | undefined =
+    (mergeHeadSha || conflictedCount > 0) && activeBranch === currentBranch
+      ? {
+          active: true,
+          oursBranch: currentBranch || defaultBranch,
+          theirsBranch: incomingLabel,
+          conflictedCount: Math.max(1, conflictedCount),
+          mergeHeadSha,
+        }
+      : undefined;
 
   return {
     owner: 'local',
@@ -1452,6 +1584,13 @@ export async function loadBrowserGitRepoVillage(
     isLocal: true,
     localPath: source.rootName,
     gateVisitors: sortedVisitors,
+    mergeConflict,
+    ciWeather: mergeConflict?.active
+      ? {
+          status: 'failing',
+          summary: `Merge conflict (${mergeConflict.oursBranch} ← ${mergeConflict.theirsBranch})`,
+        }
+      : undefined,
     branches,
     commitsBySha,
   };

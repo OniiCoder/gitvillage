@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type {
   BranchIslandData,
   BridgeLayout,
+  BrokenBridgePlank,
   GateLayout,
   IslandLayout,
   RepoVillageGraph,
@@ -19,6 +20,9 @@ export interface BuiltWorld {
     clouds: Array<{ mesh: THREE.Object3D; speed: number; baseZ: number }>;
     lanternGlows: THREE.MeshStandardMaterial[];
     windowGlows: THREE.MeshStandardMaterial[];
+    conflictRifts: THREE.Object3D[];
+    conflictGateBarrier?: THREE.Object3D;
+    gateRoofMat?: THREE.MeshStandardMaterial;
     headBeacon?: THREE.Object3D;
     fireflies?: THREE.Points;
     stormGroup?: THREE.Group;
@@ -358,7 +362,14 @@ function buildSuspensionBridge(
   start: THREE.Vector3,
   end: THREE.Vector3,
   lanternGlows: THREE.MeshStandardMaterial[],
-): { group: THREE.Group; curve: THREE.CatmullRomCurve3 } {
+  conflictMeta?: { oursBranch: string; theirsBranch: string },
+  conflictRifts?: THREE.Object3D[],
+): {
+  group: THREE.Group;
+  curve: THREE.CatmullRomCurve3;
+  conflictRiftGroup?: THREE.Group;
+  brokenPlanks?: BrokenBridgePlank[];
+} {
   const group = new THREE.Group();
   const dist = start.distanceTo(end);
   const mid = start.clone().lerp(end, 0.5);
@@ -375,11 +386,18 @@ function buildSuspensionBridge(
   const plankCount = Math.max(8, Math.floor(dist / 0.58));
   const plankGeo = new THREE.BoxGeometry(1.15, 0.08, 0.36);
   const plankMat = new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.88 });
+  const charredPlankMat = new THREE.MeshStandardMaterial({
+    color: 0x7f1d1d,
+    emissive: 0x991b1b,
+    emissiveIntensity: 0.28,
+    roughness: 0.85,
+  });
   const ropeMat = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.85 });
 
   const leftRailPts: THREE.Vector3[] = [];
   const rightRailPts: THREE.Vector3[] = [];
   const up = new THREE.Vector3(0, 1, 0);
+  const brokenPlanks: BrokenBridgePlank[] = [];
 
   for (let i = 0; i <= plankCount; i++) {
     const t = i / plankCount;
@@ -388,7 +406,12 @@ function buildSuspensionBridge(
     const side = new THREE.Vector3().crossVectors(up, tangent).normalize();
 
     if (i > 0 && i < plankCount) {
-      const plank = new THREE.Mesh(plankGeo, plankMat);
+      const inChasm = Boolean(conflictMeta && t > 0.37 && t < 0.63);
+      const nearFracture = Boolean(
+        conflictMeta && !inChasm && ((t >= 0.23 && t <= 0.37) || (t >= 0.63 && t <= 0.77)),
+      );
+
+      const plank = new THREE.Mesh(plankGeo, nearFracture ? charredPlankMat : plankMat);
       plank.position.copy(pt);
       plank.position.y += 0.04;
       const lookTarget = pt.clone().add(tangent);
@@ -396,6 +419,54 @@ function buildSuspensionBridge(
       plank.lookAt(lookTarget);
       plank.castShadow = true;
       plank.receiveShadow = true;
+
+      if (conflictMeta && (inChasm || nearFracture)) {
+        const healedPos = plank.position.clone();
+        const healedRot = plank.rotation.clone();
+
+        if (inChasm) {
+          const brokenPos = healedPos.clone().add(new THREE.Vector3(0, -1.4, 0));
+          const brokenRot = new THREE.Euler(
+            healedRot.x + 0.6,
+            healedRot.y + 0.3,
+            healedRot.z - 0.5,
+          );
+          plank.position.copy(brokenPos);
+          plank.rotation.copy(brokenRot);
+          plank.scale.setScalar(0.001);
+          brokenPlanks.push({
+            mesh: plank,
+            brokenPos,
+            brokenRot,
+            healedPos,
+            healedRot,
+            hiddenWhenBroken: true,
+          });
+        } else {
+          const sideDir = t < 0.5 ? -1 : 1;
+          const proximity =
+            t < 0.5 ? (t - 0.23) / 0.14 : (0.77 - t) / 0.14;
+          const lift = Math.max(0, proximity) * 0.62;
+          const brokenPos = healedPos
+            .clone()
+            .add(new THREE.Vector3(0, lift, ((i % 2) - 0.5) * 0.26 * proximity));
+          const brokenRot = new THREE.Euler(
+            healedRot.x - sideDir * proximity * 0.42,
+            healedRot.y + ((i % 2 === 0 ? 1 : -1) * proximity * 0.28),
+            healedRot.z + ((i % 2 === 0 ? -1 : 1) * proximity * 0.34),
+          );
+          plank.position.copy(brokenPos);
+          plank.rotation.copy(brokenRot);
+          brokenPlanks.push({
+            mesh: plank,
+            brokenPos,
+            brokenRot,
+            healedPos,
+            healedRot,
+          });
+        }
+      }
+
       group.add(plank);
     }
 
@@ -405,7 +476,8 @@ function buildSuspensionBridge(
     leftRailPts.push(lPt);
     rightRailPts.push(rPt);
 
-    // End posts or periodic vertical hangers
+    // End posts or periodic vertical hangers (skip center chasm when conflicted)
+    const skipHanger = Boolean(conflictMeta && t > 0.34 && t < 0.66);
     if (i === 0 || i === plankCount) {
       for (const sgn of [-1, 1]) {
         const post = new THREE.Mesh(
@@ -416,7 +488,7 @@ function buildSuspensionBridge(
         post.position.y += 0.52;
         group.add(post);
       }
-    } else if (i % 4 === 0) {
+    } else if (i % 4 === 0 && !skipHanger) {
       for (const [sgn, rTop] of [
         [1, lPt],
         [-1, rPt],
@@ -431,28 +503,138 @@ function buildSuspensionBridge(
     }
   }
 
-  // Handrail ropes
-  for (const pts of [leftRailPts, rightRailPts]) {
-    const railCurve = new THREE.CatmullRomCurve3(pts);
-    const railGeo = new THREE.TubeGeometry(railCurve, plankCount * 2, 0.032, 5, false);
-    group.add(new THREE.Mesh(railGeo, ropeMat));
-  }
+  let conflictRiftGroup: THREE.Group | undefined;
 
-  // Mid-bridge glowing lantern
-  const midRail = leftRailPts[Math.floor(leftRailPts.length / 2)];
-  if (midRail) {
-    const glowMat = new THREE.MeshStandardMaterial({
-      color: 0xfef08a,
-      emissive: 0xf97316,
-      emissiveIntensity: 0.85,
+  if (conflictMeta) {
+    // Split handrails on either side of the fracture + hidden center rail that heals on resolution
+    const cutA = Math.max(2, Math.floor(leftRailPts.length * 0.36));
+    const cutB = Math.min(leftRailPts.length - 3, Math.ceil(leftRailPts.length * 0.64));
+    for (const pts of [leftRailPts, rightRailPts]) {
+      const seg1 = new THREE.CatmullRomCurve3(pts.slice(0, cutA + 1));
+      const seg2 = new THREE.CatmullRomCurve3(pts.slice(cutB));
+      group.add(new THREE.Mesh(new THREE.TubeGeometry(seg1, cutA * 2, 0.032, 5, false), ropeMat));
+      group.add(
+        new THREE.Mesh(
+          new THREE.TubeGeometry(seg2, (pts.length - cutB) * 2, 0.032, 5, false),
+          ropeMat,
+        ),
+      );
+
+      // Center span hidden while broken, restored smoothly on resolution!
+      const midSpanPts = pts.slice(Math.max(0, cutA - 1), Math.min(pts.length, cutB + 2));
+      if (midSpanPts.length >= 2) {
+        const midCurve = new THREE.CatmullRomCurve3(midSpanPts);
+        const midRailMesh = new THREE.Mesh(
+          new THREE.TubeGeometry(midCurve, 12, 0.032, 5, false),
+          ropeMat,
+        );
+        midRailMesh.scale.setScalar(0.001);
+        group.add(midRailMesh);
+        brokenPlanks.push({
+          mesh: midRailMesh,
+          brokenPos: new THREE.Vector3(0, -0.5, 0),
+          brokenRot: new THREE.Euler(0, 0, 0),
+          healedPos: new THREE.Vector3(0, 0, 0),
+          healedRot: new THREE.Euler(0, 0, 0),
+          hiddenWhenBroken: true,
+        });
+      }
+    }
+
+    // Glowing Crimson-Amber Lightning Rift & Hazard Barricades in the fractured bridge chasm!
+    conflictRiftGroup = new THREE.Group();
+    const midPt = curve.getPointAt(0.5);
+    conflictRiftGroup.position.copy(midPt);
+
+    const riftCoreMat = new THREE.MeshStandardMaterial({
+      color: 0xff453a,
+      emissive: 0xef4444,
+      emissiveIntensity: 1.55,
+      roughness: 0.18,
+      flatShading: true,
     });
-    lanternGlows.push(glowMat);
-    const midLamp = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), glowMat);
-    midLamp.position.copy(midRail).add(new THREE.Vector3(0, 0.14, 0));
-    group.add(midLamp);
+    const amberBoltMat = new THREE.MeshBasicMaterial({
+      color: 0xfef08a,
+    });
+
+    const coreCluster = new THREE.Group();
+    coreCluster.position.y = 0.72;
+    const mainShard = new THREE.Mesh(new THREE.OctahedronGeometry(0.54, 0), riftCoreMat);
+    mainShard.scale.set(0.85, 1.65, 0.85);
+    coreCluster.add(mainShard);
+
+    // Orbiting jagged crimson/gold lightning rings & shards
+    const ringMesh = new THREE.Mesh(
+      new THREE.TorusGeometry(0.92, 0.045, 6, 18),
+      new THREE.MeshBasicMaterial({ color: 0xf97316 }),
+    );
+    ringMesh.rotation.x = Math.PI / 2.6;
+    coreCluster.add(ringMesh);
+
+    const ringMesh2 = new THREE.Mesh(
+      new THREE.TorusGeometry(0.76, 0.035, 6, 16),
+      amberBoltMat,
+    );
+    ringMesh2.rotation.y = Math.PI / 3;
+    ringMesh2.rotation.x = -Math.PI / 3.2;
+    coreCluster.add(ringMesh2);
+
+    // Crossed lightning swords/bolts inside the rift
+    for (const sgn of [-1, 1]) {
+      const bolt = new THREE.Mesh(new THREE.OctahedronGeometry(0.18, 0), amberBoltMat);
+      bolt.scale.set(0.45, 3.6, 0.45);
+      bolt.rotation.z = sgn * 0.68;
+      coreCluster.add(bolt);
+    }
+
+    conflictRiftGroup.add(coreCluster);
+    conflictRifts?.push(coreCluster);
+
+    // Floating Conflict Warning Plaque above the fractured bridge
+    const conflictSignTex = makeSignTexture(
+      'MERGE CONFLICT',
+      '#ff453a',
+      `${conflictMeta.theirsBranch} ⚡ ${conflictMeta.oursBranch}`,
+    );
+    const conflictPlaque = new THREE.Mesh(
+      new THREE.BoxGeometry(2.55, 0.86, 0.1),
+      new THREE.MeshBasicMaterial({ map: conflictSignTex }),
+    );
+    conflictPlaque.position.set(0, 2.35, 0);
+    const conflictPlaqueBack = conflictPlaque.clone();
+    conflictPlaqueBack.rotation.y = Math.PI;
+    conflictRiftGroup.add(conflictPlaque, conflictPlaqueBack);
+
+    group.add(conflictRiftGroup);
+  } else {
+    // Handrail ropes
+    for (const pts of [leftRailPts, rightRailPts]) {
+      const railCurve = new THREE.CatmullRomCurve3(pts);
+      const railGeo = new THREE.TubeGeometry(railCurve, plankCount * 2, 0.032, 5, false);
+      group.add(new THREE.Mesh(railGeo, ropeMat));
+    }
+
+    // Mid-bridge glowing lantern
+    const midRail = leftRailPts[Math.floor(leftRailPts.length / 2)];
+    if (midRail) {
+      const glowMat = new THREE.MeshStandardMaterial({
+        color: 0xfef08a,
+        emissive: 0xf97316,
+        emissiveIntensity: 0.85,
+      });
+      lanternGlows.push(glowMat);
+      const midLamp = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), glowMat);
+      midLamp.position.copy(midRail).add(new THREE.Vector3(0, 0.14, 0));
+      group.add(midLamp);
+    }
   }
 
-  return { group, curve };
+  return {
+    group,
+    curve,
+    conflictRiftGroup,
+    brokenPlanks: brokenPlanks.length > 0 ? brokenPlanks : undefined,
+  };
 }
 
 function addBridgeApproachSpur(
@@ -546,6 +728,7 @@ interface PlannedSideBranch {
   bWidth: number;
   forkRatio: number;
   mergeRatio: number | null;
+  isConflictedMerge: boolean;
   centerX: number;
   centerY: number;
   centerZ: number;
@@ -565,10 +748,17 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
     clouds: [],
     lanternGlows: [],
     windowGlows: [],
+    conflictRifts: [],
   };
 
   const mainBranch = graph.branches.find((b) => b.isDefault) ?? graph.branches[0];
   const sideBranches = graph.branches.filter((b) => b !== mainBranch);
+  const activeConflict = graph.mergeConflict?.active ? graph.mergeConflict : undefined;
+  const conflictTargetBranch = activeConflict
+    ? (sideBranches.find((b) => b.name === activeConflict.theirsBranch)?.name ??
+      sideBranches.find((b) => !b.mergeIntoSha)?.name ??
+      sideBranches[0]?.name)
+    : undefined;
 
   const mainCommitCount = Math.max(2, mainBranch.commits.length);
   const mainIndexBySha = new Map<string, number>();
@@ -590,13 +780,17 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
     const cCount = Math.max(2, branch.commits.length);
     const bLength = Math.max(10.2, cCount * 2.65 + 4.8);
     const bWidth = 6.4;
-    const zSide: -1 | 1 = bIdx % 2 === 0 ? -1 : 1;
+    const isConflictedMerge = Boolean(activeConflict && branch.name === conflictTargetBranch);
+    // Keep conflicted merge island on +Z (front camera side) when it is the sole side branch so the cracked bridge shines front-and-center!
+    const zSide: -1 | 1 =
+      isConflictedMerge && sideBranches.length === 1 ? 1 : bIdx % 2 === 0 ? -1 : 1;
     const fallbackRatio =
       0.16 + ((bIdx + 0.5) / Math.max(1, sideBranches.length)) * 0.62;
     const forkRatio = commitRatioOnMain(branch.forkFromSha, fallbackRatio);
     const mergeIdx = branch.mergeIntoSha ? mainIndexBySha.get(branch.mergeIntoSha) : undefined;
-    const mergeRatio =
-      mergeIdx !== undefined
+    const mergeRatio = isConflictedMerge
+      ? Math.max(forkRatio + 0.16, 0.88)
+      : mergeIdx !== undefined
         ? Math.max(forkRatio + 0.14, commitRatioOnMain(branch.mergeIntoSha, forkRatio + 0.2))
         : null;
 
@@ -608,6 +802,7 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
       bWidth,
       forkRatio,
       mergeRatio,
+      isConflictedMerge,
       centerX: 0,
       centerY: 0,
       centerZ: 0,
@@ -961,8 +1156,10 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
     const bSign = new THREE.Group();
     const bTex = makeSignTexture(
       branch.name,
-      branch.color,
-      `${branch.commits.length} commit${branch.commits.length === 1 ? '' : 's'}${branch.mergeIntoSha ? ' · merged' : ' · active'}`,
+      plan.isConflictedMerge ? '#ff453a' : branch.color,
+      plan.isConflictedMerge
+        ? `${branch.commits.length} commit${branch.commits.length === 1 ? '' : 's'} · ⚡ merge conflict`
+        : `${branch.commits.length} commit${branch.commits.length === 1 ? '' : 's'}${branch.mergeIntoSha ? ' · merged' : ' · active'}`,
     );
     const bBoard = new THREE.Mesh(
       new THREE.BoxGeometry(2.35, 0.88, 0.1),
@@ -1093,6 +1290,13 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
         branchEdgeEnd,
         mainEdgeEnd,
         animatedProps.lanternGlows,
+        plan.isConflictedMerge
+          ? {
+              oursBranch: activeConflict?.oursBranch ?? mainBranch.name,
+              theirsBranch: activeConflict?.theirsBranch ?? branch.name,
+            }
+          : undefined,
+        animatedProps.conflictRifts,
       );
       worldGroup.add(mergeBridge.group);
       bridges.push({
@@ -1108,6 +1312,9 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
         ),
         entryPathT: mergeEntrySpur.spineT,
         exitPathT: mergeExitSpur.spineT,
+        isConflicted: plan.isConflictedMerge,
+        conflictRiftGroup: mergeBridge.conflictRiftGroup,
+        brokenPlanks: mergeBridge.brokenPlanks,
       });
     }
   }
@@ -1248,10 +1455,11 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
   animatedProps.rainLines = rainLines;
   animatedProps.lightningBolt = lightningBolt;
 
-  // 5. If this is a Local Repo, build the Working-Tree Village Gate & Sky-Dock Arrival Pier!
+  // 5. If this is a Local Repo (or has active Gate Visitors / Merge Conflict), build the Working-Tree Village Gate & Sky-Dock Arrival Pier!
   let gate: GateLayout | undefined;
-  if (graph.isLocal) {
+  if (graph.isLocal || (graph.gateVisitors?.length ?? 0) > 0 || Boolean(activeConflict)) {
     const visitorCount = graph.gateVisitors?.length ?? 0;
+    const isGateConflicted = Boolean(activeConflict);
     const archX = mainLength * 0.47;
     const archPosition = new THREE.Vector3(archX, 0, 0);
 
@@ -1344,9 +1552,9 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
 
       // Hanging Gate Lanterns
       const glowMat = new THREE.MeshStandardMaterial({
-        color: 0xfef08a,
-        emissive: visitorCount > 0 ? 0xf97316 : 0x10b981,
-        emissiveIntensity: 1.1,
+        color: isGateConflicted ? 0xfca5a5 : 0xfef08a,
+        emissive: isGateConflicted ? 0xef4444 : visitorCount > 0 ? 0xf97316 : 0x10b981,
+        emissiveIntensity: isGateConflicted ? 1.55 : 1.1,
       });
       animatedProps.lanternGlows.push(glowMat);
       const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.32, 0.24), glowMat);
@@ -1364,10 +1572,11 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
     gateGroup.add(lintel);
 
     const roofMat = new THREE.MeshStandardMaterial({
-      color: visitorCount > 0 ? 0xd97706 : 0x059669,
+      color: isGateConflicted ? 0xb91c1c : visitorCount > 0 ? 0xd97706 : 0x059669,
       roughness: 0.72,
       flatShading: true,
     });
+    animatedProps.gateRoofMat = roofMat;
     const gableRoof = new THREE.Mesh(
       new THREE.BoxGeometry(1.22, 0.26, gateSpanZ * 2 + 1.95),
       roofMat,
@@ -1382,13 +1591,17 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
 
     // Gate Overhead Sign Plaque (readable from both outside pier & inside island)
     const gateSignTex = makeSignTexture(
-      visitorCount > 0
-        ? `VILLAGE GATE · ${visitorCount}`
-        : 'VILLAGE GATE · OPEN',
-      visitorCount > 0 ? '#fbbf24' : '#34d399',
-      visitorCount > 0
-        ? `${visitorCount} changed file${visitorCount === 1 ? '' : 's'} waiting outside!`
-        : 'Clean working tree · 0 waiting',
+      isGateConflicted
+        ? `CONFLICT AT GATE · ${activeConflict?.conflictedCount ?? visitorCount}`
+        : visitorCount > 0
+          ? `VILLAGE GATE · ${visitorCount}`
+          : 'VILLAGE GATE · OPEN',
+      isGateConflicted ? '#ff453a' : visitorCount > 0 ? '#fbbf24' : '#34d399',
+      isGateConflicted
+        ? `${activeConflict?.oursBranch} ⚡ ${activeConflict?.theirsBranch} — resolve conflicts!`
+        : visitorCount > 0
+          ? `${visitorCount} changed file${visitorCount === 1 ? '' : 's'} waiting outside!`
+          : 'Clean working tree · 0 waiting',
     );
     const gatePlaque = new THREE.Mesh(
       new THREE.BoxGeometry(2.85, 0.92, 0.12),
@@ -1446,6 +1659,28 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
     }
 
     gateGroup.add(leftDoorPivot, rightDoorPivot);
+
+    // Glowing Crimson Crossed-Beam Energy Barricade across closed Gate Doors during Merge Conflicts!
+    if (isGateConflicted) {
+      const barrierGroup = new THREE.Group();
+      barrierGroup.position.set(archX + 0.26, 1.15, 0);
+      const barrierMat = new THREE.MeshStandardMaterial({
+        color: 0xff453a,
+        emissive: 0xef4444,
+        emissiveIntensity: 1.35,
+        roughness: 0.25,
+      });
+      for (const sgn of [-1, 1]) {
+        const bar = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.14, 3.3), barrierMat);
+        bar.rotation.x = sgn * 0.42;
+        barrierGroup.add(bar);
+      }
+      const seal = new THREE.Mesh(new THREE.OctahedronGeometry(0.26, 0), barrierMat);
+      barrierGroup.add(seal);
+      gateGroup.add(barrierGroup);
+      animatedProps.conflictGateBarrier = barrierGroup;
+    }
+
     worldGroup.add(gateGroup);
 
     // Compute 1-to-1 Waiting Queue Slots on the Sky-Dock right outside the gate!

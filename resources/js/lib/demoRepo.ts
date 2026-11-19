@@ -1,4 +1,12 @@
-import type { BranchIslandData, CommitData, CommitFileChange, CommitKind, RepoVillageGraph } from '@/types/village';
+import { parseConflictMarkersFromText } from './conflictParser';
+import type {
+  BranchIslandData,
+  CommitData,
+  CommitFileChange,
+  CommitKind,
+  GateVisitorFile,
+  RepoVillageGraph,
+} from '@/types/village';
 
 export function classifyCommitKind(subject: string, parentCount: number): CommitKind {
   const lower = subject.trim().toLowerCase();
@@ -643,5 +651,125 @@ export function createDemoRepoGraph(): RepoVillageGraph {
     },
     branches,
     commitsBySha,
+  };
+}
+
+export function createConflictDemoRepoGraph(): RepoVillageGraph {
+  const base = createDemoRepoGraph();
+
+  const rawConflictedFiles: Array<{ filename: string; rawText: string }> = [
+    {
+      filename: 'src/world/skybox.ts',
+      rawText: [
+        `export interface AtmosphereUniforms {`,
+        `  readonly zenithHex: string;`,
+        `  readonly horizonHex: string;`,
+        `<<<<<<< main`,
+        `  readonly fogDensity: number;`,
+        `  readonly sunIntensity: number;`,
+        `=======`,
+        `  readonly fireflyBloomGain: number;`,
+        `  readonly lanternWarmthK: number;`,
+        `  readonly twilightMix: number;`,
+        `>>>>>>> feat/firefly-lanterns`,
+        `}`,
+        ``,
+        `export function createSkyPreset(mode: 'day' | 'night') {`,
+        `<<<<<<< main`,
+        `  return mode === 'day'`,
+        `    ? { zenithHex: '#1d4ed8', horizonHex: '#38bdf8', fogDensity: 0.0085, sunIntensity: 1.85 }`,
+        `    : { zenithHex: '#020617', horizonHex: '#0f172a', fogDensity: 0.011, sunIntensity: 0.72 };`,
+        `=======`,
+        `  return mode === 'day'`,
+        `    ? { zenithHex: '#2563eb', horizonHex: '#7dd3fc', fireflyBloomGain: 0.15, lanternWarmthK: 3400, twilightMix: 0 }`,
+        `    : { zenithHex: '#030712', horizonHex: '#1e1b4b', fireflyBloomGain: 1.45, lanternWarmthK: 2200, twilightMix: 1 };`,
+        `>>>>>>> feat/firefly-lanterns`,
+        `}`,
+      ].join('\n'),
+    },
+    {
+      filename: 'src/world/bridges.ts',
+      rawText: [
+        `export function sampleBridgeLanternGlow(t: number, elapsed: number): number {`,
+        `  const midSpanWeight = Math.sin(t * Math.PI);`,
+        `<<<<<<< main`,
+        `  const steadyLamp = 0.85 + Math.sin(elapsed * 2.1) * 0.08;`,
+        `  return steadyLamp * midSpanWeight;`,
+        `=======`,
+        `  const fireflyPulse = 1.35 + Math.sin(elapsed * 4.6 + t * 6.0) * 0.28;`,
+        `  const emberFlicker = Math.cos(elapsed * 9.2) * 0.06;`,
+        `  return (fireflyPulse + emberFlicker) * midSpanWeight;`,
+        `>>>>>>> feat/firefly-lanterns`,
+        `}`,
+      ].join('\n'),
+    },
+    {
+      filename: 'src/entities/villager.ts',
+      rawText: [
+        `export function selectNightStrollTarget(villager: VillagerEntity): Vector3 {`,
+        `  const spine = villager.island.pathCurve;`,
+        `<<<<<<< main`,
+        `  return spine.getPointAt(villager.pathT);`,
+        `=======`,
+        `  const nearestLantern = findNearestFireflyPost(villager.island, villager.root.position);`,
+        `  return nearestLantern ? nearestLantern.gatherSpot : spine.getPointAt(villager.pathT);`,
+        `>>>>>>> feat/firefly-lanterns`,
+        `}`,
+      ].join('\n'),
+    },
+  ];
+
+  const gateVisitors: GateVisitorFile[] = rawConflictedFiles.map(({ filename, rawText }) => {
+    const parsed = parseConflictMarkersFromText(rawText, 'main', 'feat/firefly-lanterns')!;
+    return {
+      filename,
+      status: 'conflicted',
+      staged: false,
+      additions: parsed.additions,
+      deletions: parsed.deletions,
+      diffPreview: parsed.diffPreview,
+      conflict: parsed.conflict,
+    };
+  });
+
+  // Also include 1 cleanly auto-merged staged file so users see both staged & conflicted visitors together!
+  gateVisitors.push({
+    filename: 'src/shaders/fireflyGlow.glsl.ts',
+    status: 'added',
+    staged: true,
+    additions: 14,
+    deletions: 0,
+    diffPreview: [
+      '@@ -0,0 +1,8 @@',
+      '+export const FIREFLY_GLOW_FRAG = /* glsl */ `',
+      '+  uniform float uTime;',
+      '+  varying float vPhase;',
+      '+  void main() {',
+      '+    float twinkle = 0.55 + 0.45 * sin(uTime * 3.4 + vPhase);',
+      '+    gl_FragColor = vec4(1.0, 0.92, 0.48, twinkle);',
+      '+  }',
+      '+`;',
+    ].join('\n'),
+  });
+
+  return {
+    ...base,
+    description:
+      'Merge conflict storm — feat/firefly-lanterns has 3 conflicting files with main at the Village Gate!',
+    isDemo: true,
+    isLocal: true,
+    localPath: '~/projects/sky-village',
+    gateVisitors,
+    mergeConflict: {
+      active: true,
+      oursBranch: 'main',
+      theirsBranch: 'feat/firefly-lanterns',
+      conflictedCount: 3,
+      isSimulated: true,
+    },
+    ciWeather: {
+      status: 'failing',
+      summary: 'Merge blocked — 3 unresolved conflicts (main ← feat/firefly-lanterns)',
+    },
   };
 }

@@ -2,8 +2,10 @@
 
 namespace Tests\Feature;
 
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Inertia\Testing\AssertableInertia as Assert;
+use Symfony\Component\Process\Process;
 use Tests\TestCase;
 
 class VillagePageTest extends TestCase
@@ -143,5 +145,60 @@ class VillagePageTest extends TestCase
         $badge = $this->get('/badge/laravel/framework.svg')->assertOk();
         $this->assertStringContainsString('image/svg+xml', (string) $badge->headers->get('Content-Type'));
         $this->assertStringContainsString('Explore laravel/framework in 3D', (string) $badge->getContent());
+    }
+
+    public function test_local_git_inspect_detects_active_merge_conflicts_and_extracts_ours_vs_theirs(): void
+    {
+        $this->app['env'] = 'local';
+
+        $tmpDir = sys_get_temp_dir().DIRECTORY_SEPARATOR.'gitvillage-conflict-'.uniqid();
+        mkdir($tmpDir, 0777, true);
+
+        $run = static function (array $cmd) use ($tmpDir): void {
+            $proc = new Process($cmd, $tmpDir);
+            $proc->run();
+        };
+
+        try {
+            $run(['git', 'init', '-b', 'main']);
+            $run(['git', 'config', 'user.email', 'dev@gitvillage.test']);
+            $run(['git', 'config', 'user.name', 'Village Builder']);
+
+            file_put_contents($tmpDir.'/Checkout.php', "<?php\nreturn [\n    'tax_rate' => 0.05,\n];\n");
+            $run(['git', 'add', 'Checkout.php']);
+            $run(['git', 'commit', '-m', 'feat: initial checkout config']);
+
+            $run(['git', 'checkout', '-b', 'feat/eu-vat']);
+            file_put_contents($tmpDir.'/Checkout.php', "<?php\nreturn [\n    'tax_rate' => 0.21,\n    'region' => 'EU',\n];\n");
+            $run(['git', 'commit', '-am', 'feat: apply EU VAT rate']);
+
+            $run(['git', 'checkout', 'main']);
+            file_put_contents($tmpDir.'/Checkout.php', "<?php\nreturn [\n    'tax_rate' => 0.0825,\n    'region' => 'US-TX',\n];\n");
+            $run(['git', 'commit', '-am', 'fix: update US sales tax rate']);
+
+            // Trigger an actual unmerged Git conflict (`UU`)
+            $run(['git', 'merge', 'feat/eu-vat']);
+
+            $res = $this->getJson('/api/local-repo?path='.urlencode($tmpDir))->assertOk();
+
+            $res->assertJsonPath('mergeConflict.active', true)
+                ->assertJsonPath('mergeConflict.oursBranch', 'main')
+                ->assertJsonPath('mergeConflict.theirsBranch', 'feat/eu-vat')
+                ->assertJsonPath('mergeConflict.conflictedCount', 1)
+                ->assertJsonPath('gateVisitors.0.filename', 'Checkout.php')
+                ->assertJsonPath('gateVisitors.0.status', 'conflicted')
+                ->assertJsonPath('gateVisitors.0.staged', false);
+
+            $oursContent = (string) $res->json('gateVisitors.0.conflict.oursContent');
+            $theirsContent = (string) $res->json('gateVisitors.0.conflict.theirsContent');
+            $diffPreview = (string) $res->json('gateVisitors.0.diffPreview');
+
+            $this->assertStringContainsString('0.0825', $oursContent);
+            $this->assertStringContainsString('0.21', $theirsContent);
+            $this->assertStringContainsString('<<<<<<<', $diffPreview);
+            $this->assertStringContainsString('>>>>>>>', $diffPreview);
+        } finally {
+            File::deleteDirectory($tmpDir);
+        }
     }
 }

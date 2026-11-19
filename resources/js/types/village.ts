@@ -2,16 +2,31 @@ import type * as THREE from 'three';
 
 export type CommitKind = 'feat' | 'fix' | 'merge' | 'docs' | 'refactor' | 'chore';
 
+export interface ConflictDiffSides {
+  oursLabel: string;
+  theirsLabel: string;
+  oursContent: string;
+  theirsContent: string;
+  conflictMarkersCount: number;
+}
+
 export interface CommitFileChange {
   filename: string;
   previousFilename?: string;
-  status: 'added' | 'modified' | 'removed' | 'renamed';
+  status: 'added' | 'modified' | 'removed' | 'renamed' | 'conflicted';
   additions: number;
   deletions: number;
   patch?: string;
+  conflict?: ConflictDiffSides;
 }
 
-export type WorkingTreeStatus = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked';
+export type WorkingTreeStatus =
+  | 'modified'
+  | 'added'
+  | 'deleted'
+  | 'renamed'
+  | 'untracked'
+  | 'conflicted';
 
 export interface GateVisitorFile {
   filename: string;
@@ -20,6 +35,16 @@ export interface GateVisitorFile {
   additions: number;
   deletions: number;
   diffPreview?: string;
+  conflict?: ConflictDiffSides;
+}
+
+export interface MergeConflictInfo {
+  active: boolean;
+  oursBranch: string;
+  theirsBranch: string;
+  conflictedCount: number;
+  mergeHeadSha?: string;
+  isSimulated?: boolean;
 }
 
 export interface CommitData {
@@ -78,6 +103,7 @@ export interface RepoVillageGraph {
   localPath?: string;
   gateVisitors?: GateVisitorFile[];
   ciWeather?: CiWeatherInfo;
+  mergeConflict?: MergeConflictInfo;
   branches: BranchIslandData[];
   commitsBySha: Map<string, CommitData>;
 }
@@ -104,6 +130,15 @@ export interface GateLayout {
   visitorSlots: THREE.Vector3[];
 }
 
+export interface BrokenBridgePlank {
+  mesh: THREE.Object3D;
+  brokenPos: THREE.Vector3;
+  brokenRot: THREE.Euler;
+  healedPos: THREE.Vector3;
+  healedRot: THREE.Euler;
+  hiddenWhenBroken?: boolean;
+}
+
 export interface BridgeLayout {
   kind: 'fork' | 'merge';
   fromBranch: string;
@@ -113,6 +148,9 @@ export interface BridgeLayout {
   traversalCurve: THREE.CatmullRomCurve3;
   entryPathT: number;
   exitPathT: number;
+  isConflicted?: boolean;
+  conflictRiftGroup?: THREE.Group;
+  brokenPlanks?: BrokenBridgePlank[];
 }
 
 export type VillagerBehavior =
@@ -185,6 +223,13 @@ export interface GateVisitorEntity {
   cargoGroup: THREE.Group;
   burden: number;
   ticketMesh?: THREE.Object3D;
+  duelRig?: {
+    oursBody: THREE.Group;
+    theirsBody: THREE.Group;
+    oursArm: THREE.Object3D;
+    theirsArm: THREE.Object3D;
+    clashSpark: THREE.Object3D;
+  };
   auraRing: THREE.Mesh;
   hitBox: THREE.Mesh;
   queueSlot: THREE.Vector3;

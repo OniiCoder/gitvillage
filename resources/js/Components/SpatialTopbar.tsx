@@ -24,6 +24,7 @@ interface SpatialTopbarProps {
   onToggleWalkMode: () => void;
   onCycleSky: () => void;
   onToggleCiStorm: () => void;
+  onFocusConflict: () => void;
   onToggleMute: () => void;
   onShare: () => void;
 }
@@ -48,6 +49,7 @@ export function SpatialTopbar({
   onToggleWalkMode,
   onCycleSky,
   onToggleCiStorm,
+  onFocusConflict,
   onToggleMute,
   onShare,
 }: SpatialTopbarProps) {
@@ -139,7 +141,22 @@ export function SpatialTopbar({
           <span id="repo-stats-pill" className="stats-pill">
             {statsLabel}
           </span>
-          {ciWeather && ciWeather.status !== 'unknown' && (
+          {graph.mergeConflict?.active && (
+            <button
+              type="button"
+              id="merge-conflict-pill"
+              className="merge-conflict-pill"
+              title={`Merge conflict (${graph.mergeConflict.oursBranch} ← ${graph.mergeConflict.theirsBranch}) — click to inspect`}
+              onClick={onFocusConflict}
+            >
+              <span aria-hidden="true">⚔️</span>
+              <span>
+                {graph.mergeConflict.conflictedCount}{' '}
+                {graph.mergeConflict.conflictedCount === 1 ? 'Conflict' : 'Conflicts'}
+              </span>
+            </button>
+          )}
+          {!graph.mergeConflict?.active && ciWeather && ciWeather.status !== 'unknown' && (
             <button
               type="button"
               id="ci-weather-pill"

@@ -4,6 +4,7 @@ import type {
   CommitData,
   CommitFileChange,
   GateVisitorFile,
+  MergeConflictInfo,
   RepoVillageGraph,
 } from '@/types/village';
 
@@ -140,6 +141,7 @@ interface LocalRepoApiResponse {
   }>;
   gateVisitors: GateVisitorFile[];
   totalChangedFiles: number;
+  mergeConflict?: MergeConflictInfo | null;
   error?: string;
 }
 
@@ -269,8 +271,11 @@ export async function loadLocalRepoVillage(
     }
   }
 
-  // Sort gate visitors so Staged (`git add`) visitors stand right at the front of the gate!
+  // Sort gate visitors so Conflicted & Staged (`git add`) visitors stand right at the front of the gate!
   const sortedVisitors = (payload.gateVisitors ?? []).toSorted((a, b) => {
+    const aConf = a.status === 'conflicted';
+    const bConf = b.status === 'conflicted';
+    if (aConf !== bConf) return aConf ? -1 : 1;
     if (a.staged !== b.staged) return a.staged ? -1 : 1;
     return a.filename.localeCompare(b.filename);
   });
@@ -295,6 +300,13 @@ export async function loadLocalRepoVillage(
     isLocal: true,
     localPath: payload.localPath,
     gateVisitors: sortedVisitors,
+    mergeConflict: payload.mergeConflict ?? undefined,
+    ciWeather: payload.mergeConflict?.active
+      ? {
+          status: 'failing',
+          summary: `Merge conflict (${payload.mergeConflict.oursBranch} ← ${payload.mergeConflict.theirsBranch})`,
+        }
+      : undefined,
     branches,
     commitsBySha,
   };

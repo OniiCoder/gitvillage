@@ -96,7 +96,13 @@ export function CensusPopover({
                     />
                     <span>{gv.filename}</span>
                   </span>
-                  <span className="roster-row-sha">{gv.staged ? 'Staged' : gv.status}</span>
+                  <span className="roster-row-sha">
+                    {gv.status === 'conflicted'
+                      ? '⚔️ Conflict'
+                      : gv.staged
+                        ? 'Staged'
+                        : gv.status}
+                  </span>
                 </button>
               ))}
             </div>

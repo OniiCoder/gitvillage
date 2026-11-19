@@ -105,22 +105,42 @@ export function InspectorSheet({
       >
         <div className="inspector-top">
           <div className="role-chip-row">
-            <span id="ins-role-badge" className="meta-pill">
-              {meta.label}
+            <span
+              id="ins-role-badge"
+              className="meta-pill"
+              style={
+                f.status === 'conflicted'
+                  ? {
+                      color: '#fca5a5',
+                      background: 'rgba(255, 69, 58, 0.24)',
+                    }
+                  : undefined
+              }
+            >
+              {f.status === 'conflicted' ? '⚔️ Merge Conflict' : meta.label}
             </span>
             <span
               id="ins-branch-badge"
               className="meta-pill meta-pill-branch"
               style={
-                f.staged
+                f.status === 'conflicted'
                   ? {
-                      color: '#30d158',
-                      background: 'rgba(48, 209, 88, 0.16)',
+                      color: '#fdba74',
+                      background: 'rgba(249, 115, 22, 0.2)',
                     }
-                  : undefined
+                  : f.staged
+                    ? {
+                        color: '#30d158',
+                        background: 'rgba(48, 209, 88, 0.16)',
+                      }
+                    : undefined
               }
             >
-              {f.staged ? 'Staged · git add' : 'Unstaged change'}
+              {f.status === 'conflicted'
+                ? `${f.conflict?.oursLabel ?? graph.defaultBranch} ⚡ ${f.conflict?.theirsLabel ?? 'incoming'}`
+                : f.staged
+                  ? 'Staged · git add'
+                  : 'Unstaged change'}
             </span>
           </div>
           <button
@@ -142,6 +162,34 @@ export function InspectorSheet({
           {graph.defaultBranch}
         </p>
 
+        {f.conflict && (
+          <div
+            id="ins-conflict-card"
+            className={`inset-group ins-conflict-card${f.status !== 'conflicted' ? ' is-resolved' : ''}`}
+          >
+            <div className="ins-conflict-copy">
+              <strong>
+                <span aria-hidden="true">{f.status === 'conflicted' ? '⚔️' : '🤝'}</span>{' '}
+                {f.status === 'conflicted'
+                  ? `${f.conflict.conflictMarkersCount} Conflict Hunk${f.conflict.conflictMarkersCount === 1 ? '' : 's'} Blocking Merge`
+                  : 'Conflicts Resolved · Ready to Commit'}
+              </strong>
+              <span>
+                <code>{f.conflict.oursLabel}</code> vs <code>{f.conflict.theirsLabel}</code>
+              </span>
+            </div>
+            <button
+              type="button"
+              id="ins-compare-conflict-btn"
+              className="conflict-compare-btn"
+              onClick={() => onOpenDiffModal(f.filename)}
+            >
+              <SfIcon name="sf-expand" size={11} />
+              <span>Ours vs Theirs</span>
+            </button>
+          </div>
+        )}
+
         <div id="ins-author-row" className="inset-group ins-author-row">
           <div
             id="ins-avatar"
@@ -153,12 +201,18 @@ export function InspectorSheet({
           </div>
           <div className="ins-author-meta">
             <strong id="ins-author-name">
-              {f.staged ? 'Ready at front of Gate' : 'Queued on Sky-Dock Pier'}
+              {f.status === 'conflicted'
+                ? 'Dueling at the Closed Gate'
+                : f.staged
+                  ? 'Ready at front of Gate'
+                  : 'Queued on Sky-Dock Pier'}
             </strong>
             <span id="ins-timestamp">
-              {f.staged
-                ? 'Enters village on next git commit'
-                : 'Stage with git add and commit to admit'}
+              {f.status === 'conflicted'
+                ? 'Bridge fractured until conflict markers are resolved'
+                : f.staged
+                  ? 'Enters village on next git commit'
+                  : 'Stage with git add and commit to admit'}
             </span>
           </div>
           <div className="ins-sha-group">
@@ -189,11 +243,20 @@ export function InspectorSheet({
           <button
             type="button"
             id="ins-follow-btn"
-            className="sheet-btn sheet-btn-tinted"
+            className={`sheet-btn ${f.status === 'conflicted' ? 'sheet-btn-resolve' : 'sheet-btn-tinted'}`}
             onClick={onLetVisitorsIn}
           >
-            <SfIcon name="sf-gate" size={13} />
-            <span>Let In</span>
+            {f.status === 'conflicted' ? (
+              <>
+                <span aria-hidden="true">🤝</span>
+                <span>Resolve</span>
+              </>
+            ) : (
+              <>
+                <SfIcon name="sf-gate" size={13} />
+                <span>Let In</span>
+              </>
+            )}
           </button>
           <button type="button" id="ins-cheer-btn" className="sheet-btn" onClick={onSyncLocal}>
             <SfIcon name="sf-refresh" size={13} />

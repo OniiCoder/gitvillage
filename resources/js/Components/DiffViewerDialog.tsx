@@ -12,6 +12,7 @@ export interface DiffModalPayload {
   files: CommitFileChange[];
   initialFilename?: string;
   isHydrating?: boolean;
+  canResolveConflict?: boolean;
 }
 
 interface DiffViewerDialogProps {
@@ -19,6 +20,7 @@ interface DiffViewerDialogProps {
   payload: DiffModalPayload | null;
   selectedFilename: string | null;
   onSelectFilename: (filename: string | null) => void;
+  onResolveConflict?: () => void;
 }
 
 export function getFileStatusBadge(status: CommitFileChange['status']): {
@@ -27,6 +29,8 @@ export function getFileStatusBadge(status: CommitFileChange['status']): {
   className: string;
 } {
   switch (status) {
+    case 'conflicted':
+      return { short: '!', label: 'Merge Conflict', className: 'file-status-conflicted' };
     case 'added':
       return { short: 'A', label: 'Added', className: 'file-status-added' };
     case 'removed':
@@ -38,14 +42,75 @@ export function getFileStatusBadge(status: CommitFileChange['status']): {
   }
 }
 
+function ConflictSidePane({
+  side,
+  branchLabel,
+  content,
+  copiedKey,
+  onCopy,
+}: {
+  side: 'ours' | 'theirs';
+  branchLabel: string;
+  content: string;
+  copiedKey: string | null;
+  onCopy: (text: string, key: string) => void;
+}) {
+  const lines = content.replace(/\r\n/g, '\n').split('\n');
+  const copyId = `conflict-${side}:${branchLabel}`;
+
+  return (
+    <section
+      className={`conflict-side-pane is-${side}`}
+      aria-label={`${side === 'ours' ? 'Ours' : 'Theirs'} (${branchLabel}) version`}
+    >
+      <div className="conflict-side-header">
+        <div className="conflict-side-heading">
+          <span className={`conflict-side-tag is-${side}`}>
+            {side === 'ours' ? 'Ours · Current' : 'Theirs · Incoming'}
+          </span>
+          <code className="conflict-side-branch">{branchLabel}</code>
+        </div>
+        <button
+          type="button"
+          className="sha-pill"
+          onClick={() => onCopy(content, copyId)}
+        >
+          <span>{copiedKey === copyId ? 'Copied' : 'Copy'}</span>
+          <SfIcon name="sf-copy" size={11} />
+        </button>
+      </div>
+      <div className="diff-code-scroll conflict-pane-scroll">
+        <div className="diff-code-lines">
+          {lines.map((line, idx) => {
+            const isSectionHeader = line.startsWith('// Conflict #') || line.startsWith('// Line ');
+            return (
+              <div
+                key={idx}
+                className={`diff-row conflict-code-row ${isSectionHeader ? 'diff-row-hunk' : `is-${side}`}`}
+              >
+                <span className="diff-gutter" aria-hidden="true">
+                  {isSectionHeader ? '@@' : idx + 1}
+                </span>
+                <code className="diff-code-text">{line || '\u00a0'}</code>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function DiffViewerDialog({
   dialogRef,
   payload,
   selectedFilename,
   onSelectFilename,
+  onResolveConflict,
 }: DiffViewerDialogProps) {
   useLightDismissDialog(dialogRef);
   const [copiedFile, setCopiedFile] = useState<string | null>(null);
+  const [conflictViewMode, setConflictViewMode] = useState<'split' | 'inline'>('split');
 
   const files = payload?.files ?? [];
   const totalAdd = files.reduce((sum, f) => sum + f.additions, 0);
@@ -92,16 +157,32 @@ export function DiffViewerDialog({
           </span>
         </div>
 
-        <button
-          type="button"
-          id="diff-viewer-close-btn"
-          className="circle-close-btn"
-          aria-label="Close diff viewer"
-          autoFocus
-          onClick={() => void closeTopLayerDialog(dialogRef.current)}
-        >
-          <SfIcon name="sf-close" size={12} />
-        </button>
+        <div className="diff-dialog-header-actions">
+          {payload?.canResolveConflict && onResolveConflict && (
+            <button
+              type="button"
+              id="diff-resolve-conflict-btn"
+              className="conflict-resolve-cta"
+              onClick={() => {
+                onResolveConflict();
+                void closeTopLayerDialog(dialogRef.current);
+              }}
+            >
+              <span aria-hidden="true">🤝</span>
+              <span>Resolve &amp; Repair Bridge</span>
+            </button>
+          )}
+          <button
+            type="button"
+            id="diff-viewer-close-btn"
+            className="circle-close-btn"
+            aria-label="Close diff viewer"
+            autoFocus
+            onClick={() => void closeTopLayerDialog(dialogRef.current)}
+          >
+            <SfIcon name="sf-close" size={12} />
+          </button>
+        </div>
       </div>
 
       <div className="diff-dialog-body">
@@ -227,6 +308,38 @@ export function DiffViewerDialog({
                   </span>
                 </div>
                 <div className="diff-file-card-actions">
+                  {activeFile.conflict && (
+                    <div
+                      className="segmented-control conflict-mode-switch"
+                      role="group"
+                      aria-label="Conflict view layout"
+                    >
+                      <button
+                        type="button"
+                        id="conflict-split-mode-btn"
+                        className="seg-btn"
+                        aria-pressed={conflictViewMode === 'split'}
+                        onClick={() => {
+                          sound.playPop(560);
+                          setConflictViewMode('split');
+                        }}
+                      >
+                        Ours vs Theirs
+                      </button>
+                      <button
+                        type="button"
+                        id="conflict-inline-mode-btn"
+                        className="seg-btn"
+                        aria-pressed={conflictViewMode === 'inline'}
+                        onClick={() => {
+                          sound.playPop(520);
+                          setConflictViewMode('inline');
+                        }}
+                      >
+                        Inline Markers
+                      </button>
+                    </div>
+                  )}
                   <span className="file-delta">
                     <span className="delta-add">+{activeFile.additions}</span>{' '}
                     <span className="delta-del">−{activeFile.deletions}</span>
@@ -243,15 +356,34 @@ export function DiffViewerDialog({
                   )}
                 </div>
               </div>
-              <DiffCodeBlock
-                patch={activeFile.patch}
-                isLoading={Boolean(payload?.isHydrating && activeFile.patch === undefined)}
-                emptyMessage={
-                  activeFile.additions === 0 && activeFile.deletions === 0
-                    ? 'No line changes in this file'
-                    : 'Binary file or diff omitted'
-                }
-              />
+              {activeFile.conflict && conflictViewMode === 'split' ? (
+                <div id="conflict-split-grid" className="conflict-split-grid">
+                  <ConflictSidePane
+                    side="ours"
+                    branchLabel={activeFile.conflict.oursLabel}
+                    content={activeFile.conflict.oursContent}
+                    copiedKey={copiedFile}
+                    onCopy={copyPatch}
+                  />
+                  <ConflictSidePane
+                    side="theirs"
+                    branchLabel={activeFile.conflict.theirsLabel}
+                    content={activeFile.conflict.theirsContent}
+                    copiedKey={copiedFile}
+                    onCopy={copyPatch}
+                  />
+                </div>
+              ) : (
+                <DiffCodeBlock
+                  patch={activeFile.patch}
+                  isLoading={Boolean(payload?.isHydrating && activeFile.patch === undefined)}
+                  emptyMessage={
+                    activeFile.additions === 0 && activeFile.deletions === 0
+                      ? 'No line changes in this file'
+                      : 'Binary file or diff omitted'
+                  }
+                />
+              )}
             </div>
           ) : (
             <div className="diff-empty-notice">No changed files recorded for this commit.</div>

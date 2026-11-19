@@ -6,7 +6,7 @@ import {
   type BrowserRepoSource,
   loadBrowserGitRepoVillage,
 } from '@/lib/browserGitReader';
-import { createDemoRepoGraph } from '@/lib/demoRepo';
+import { createConflictDemoRepoGraph, createDemoRepoGraph } from '@/lib/demoRepo';
 import {
   fetchRepoCiWeather,
   hydrateCommitDetail,
@@ -79,10 +79,11 @@ export interface VillageEngineCallbacks {
 
 function computeLocalGraphFingerprint(graph: RepoVillageGraph): string {
   const headSha = graph.branches[0]?.commits.at(-1)?.sha ?? '';
+  const conflictFlag = graph.mergeConflict?.active ? 'conflict' : 'clean';
   const visitorsKey = (graph.gateVisitors ?? [])
     .map((v) => `${v.filename}:${v.status}:${v.staged ? 1 : 0}:${v.additions}:${v.deletions}`)
     .join('|');
-  return `${headSha}::${visitorsKey}`;
+  return `${headSha}::${conflictFlag}::${visitorsKey}`;
 }
 
 export class VillageEngine {
@@ -156,6 +157,7 @@ export class VillageEngine {
 
   private lightningTimer = 4.2;
   private lightningFlash = 0;
+  private conflictRepairProgress = 0;
 
   private raycaster = new THREE.Raycaster();
   private pointerNDC = new THREE.Vector2();
@@ -886,8 +888,126 @@ export class VillageEngine {
     }
   }
 
+  public flyToConflictZone(selectFirstConflict = true): void {
+    if (!this.builtWorld) return;
+    this.followVillager = false;
+    const conflictBridge = this.builtWorld.bridges.find((b) => b.isConflicted);
+    const gate = this.builtWorld.gate;
+
+    if (conflictBridge && gate) {
+      const mid = conflictBridge.curve.getPointAt(0.5);
+      const arch = gate.archPosition;
+      const focusX = mid.x * 0.45 + (arch.x + 1.4) * 0.55;
+      const focusZ = mid.z * 0.42;
+      const camZSign = mid.z >= 0 ? 1 : -1;
+      this.cameraFlight = {
+        targetLook: new THREE.Vector3(focusX, 1.35, focusZ),
+        targetPos: new THREE.Vector3(focusX + 4.8, 8.2, focusZ + camZSign * 15.5),
+        active: true,
+      };
+    } else if (conflictBridge) {
+      const mid = conflictBridge.curve.getPointAt(0.5);
+      const camZSign = mid.z >= 0 ? 1 : -1;
+      this.cameraFlight = {
+        targetLook: mid.clone().add(new THREE.Vector3(0, 0.8, 0)),
+        targetPos: mid.clone().add(new THREE.Vector3(4.2, 6.4, camZSign * 12.5)),
+        active: true,
+      };
+    } else if (gate) {
+      this.flyToGate(selectFirstConflict);
+      return;
+    }
+
+    const firstConflicted =
+      this.gateVisitors.find((gv) => gv.file.status === 'conflicted') ?? this.gateVisitors[0];
+    if (selectFirstConflict && firstConflicted) {
+      this.focusOnGateVisitor(firstConflicted, true, false);
+    } else {
+      this.emit();
+    }
+  }
+
+  public loadConflictDemo(updateUrl = true): void {
+    this.currentLoadController?.abort();
+    this.activeBrowserSource = null;
+    const conflictGraph = createConflictDemoRepoGraph();
+    this.rebuildVillageFromGraph(conflictGraph, { focusGateOnLoad: true });
+    this.flyToConflictZone(true);
+    sound.playPop(415.3);
+    trackEvent('merge_conflict_demo_loaded', {
+      conflicted_files: conflictGraph.mergeConflict?.conflictedCount ?? 0,
+    });
+    if (updateUrl) {
+      this.cb.onSyncUrl({ repo: null, local: null, branch: null });
+    }
+    this.cb.onToast(
+      `⚔️ Merge Conflict Storm — ${conflictGraph.mergeConflict?.theirsBranch} clashes with ${conflictGraph.mergeConflict?.oursBranch} across 3 files!`,
+      false,
+      5400,
+    );
+  }
+
+  public resolveSimulatedConflict(): void {
+    if (!this.builtWorld) return;
+    this.conflictRepairProgress = 0.001;
+    this.gatePreviewOpenTimer = 4.8;
+    for (const br of this.builtWorld.bridges) {
+      if (br.isConflicted) {
+        br.isConflicted = false;
+      }
+    }
+    if (this.activeGraph.mergeConflict) {
+      this.activeGraph = {
+        ...this.activeGraph,
+        mergeConflict: {
+          ...this.activeGraph.mergeConflict,
+          active: false,
+        },
+        ciWeather: {
+          status: 'passing',
+          summary: 'Conflicts resolved — merge bridge repaired!',
+        },
+        gateVisitors: (this.activeGraph.gateVisitors ?? []).map((f) =>
+          f.status === 'conflicted' ? { ...f, status: 'modified', staged: true } : f,
+        ),
+      };
+    }
+
+    for (const gv of this.gateVisitors) {
+      if (gv.file.status === 'conflicted') {
+        gv.file = { ...gv.file, status: 'modified', staged: true };
+        const auraMat = gv.auraRing.material as THREE.MeshBasicMaterial;
+        auraMat.color.setHex(0x30d158);
+      }
+      gv.jumpVelocity = 8.2 + Math.random() * 1.6;
+      this.triggerVisitorEmote(gv, gv.index % 2 === 0 ? '🤝' : '🎉', 3.8);
+    }
+
+    if (this.selectedGateVisitor) {
+      const updated = this.gateVisitors[this.selectedGateVisitor.index];
+      if (updated) this.selectedGateVisitor = updated;
+    }
+
+    if (this.builtWorld.animatedProps.gateRoofMat) {
+      this.builtWorld.animatedProps.gateRoofMat.color.setHex(0x059669);
+    }
+    this.applyAtmosphere('day');
+    sound.playRepoLoaded();
+    trackEvent('merge_conflict_resolved_preview', describeRepoForAnalytics(this.activeGraph));
+    this.cb.onToast(
+      '🤝 Conflicts resolved! Merge bridge repaired, storm cleared & Gate opened!',
+      false,
+      5200,
+    );
+    this.emit();
+  }
+
   public triggerGatePreviewOpen(): void {
     if (!this.builtWorld?.gate || this.gateVisitors.length === 0) return;
+    if (this.activeGraph.mergeConflict?.active) {
+      this.resolveSimulatedConflict();
+      return;
+    }
     this.gatePreviewOpenTimer = 4.2;
     sound.playRepoLoaded();
     for (const gv of this.gateVisitors) {
@@ -974,7 +1094,11 @@ export class VillageEngine {
     }
 
     gv.jumpVelocity = 7.0;
-    this.triggerVisitorEmote(gv, gv.file.staged ? '🎫' : '🙋', 2.4);
+    this.triggerVisitorEmote(
+      gv,
+      gv.file.status === 'conflicted' ? '⚔️' : gv.file.staged ? '🎫' : '🙋',
+      2.4,
+    );
 
     if (moveCamera && this.cameraMode === 'orbit') {
       const pos = gv.root.position;
@@ -1007,6 +1131,7 @@ export class VillageEngine {
     }
     this.hoverPill.hidden = true;
     this.gatePreviewOpenTimer = 0;
+    this.conflictRepairProgress = 0;
 
     if (this.builtWorld) {
       this.scene.remove(this.builtWorld.worldGroup);
@@ -1045,7 +1170,7 @@ export class VillageEngine {
       });
     }
 
-    if (graph.isLocal && this.builtWorld.gate) {
+    if (this.builtWorld.gate) {
       const gate = this.builtWorld.gate;
       const files = graph.gateVisitors ?? [];
       files.forEach((file, idx) => {
@@ -1065,6 +1190,11 @@ export class VillageEngine {
       });
     }
 
+    if (graph.mergeConflict?.active) {
+      this.timeOfDay = 'storm';
+    } else if (this.timeOfDay === 'storm' && graph.ciWeather?.status !== 'failing') {
+      this.timeOfDay = 'day';
+    }
     this.applyAtmosphere(this.timeOfDay);
     this.applyVillagerFilterBeams();
 
@@ -1078,6 +1208,8 @@ export class VillageEngine {
         const startIsl = this.builtWorld.islands[0];
         const p = startIsl.pathCurve.getPointAt(0.5);
         this.explorer.root.position.set(p.x, p.y, p.z + 0.8);
+      } else if (graph.mergeConflict?.active) {
+        this.flyToConflictZone(false);
       } else if (options.focusGateOnLoad && this.builtWorld.gate) {
         this.flyToGate(false);
       } else {
@@ -1230,7 +1362,7 @@ export class VillageEngine {
   }
 
   public async pollLocalRepoNow(manualFeedback = false): Promise<void> {
-    if (!this.activeGraph.isLocal || this.isPollingLocal) return;
+    if (this.activeGraph.isDemo || !this.activeGraph.isLocal || this.isPollingLocal) return;
     if (
       !this.activeBrowserSource?.dirHandle &&
       (!this.cb.localServerEnabled || !this.activeGraph.localPath)
@@ -1554,6 +1686,16 @@ export class VillageEngine {
         (prevT >= br.entryPathT && nextT <= br.entryPathT);
       if (!crossedEntry) continue;
 
+      // Merge Conflict Barrier: fractured bridges cannot be crossed until conflicts are resolved!
+      if (br.isConflicted) {
+        if (v.jumpY === 0 && v.emoteTimer <= 0 && Math.random() < 0.65) {
+          v.jumpVelocity = 4.8;
+          v.pathDir = (v.pathDir * -1) as 1 | -1;
+          this.triggerEmote(`c:${v.commit.sha}`, v, '⚡', 1.8);
+        }
+        continue;
+      }
+
       // Strict Zero-Traffic Rule 1: Cooldown & single-occupant reservation
       if (elapsed < (this.bridgeFreeAt.get(br) ?? 0)) continue;
       if (this.villagers.some((other) => other.activeBridge?.bridge === br)) continue;
@@ -1658,7 +1800,13 @@ export class VillageEngine {
           }
           if (gv) {
             this.canvas.style.cursor = 'pointer';
-            this.hoverPill.textContent = `${gv.file.staged ? 'Staged' : 'Gate'} · ${gv.file.filename} (+${gv.file.additions} / −${gv.file.deletions})`;
+            const prefix =
+              gv.file.status === 'conflicted'
+                ? '⚔️ Merge Conflict'
+                : gv.file.staged
+                  ? 'Staged'
+                  : 'Gate';
+            this.hoverPill.textContent = `${prefix} · ${gv.file.filename} (+${gv.file.additions} / −${gv.file.deletions})`;
             this.hoverPill.style.left = `${e.clientX}px`;
             this.hoverPill.style.top = `${e.clientY}px`;
             this.hoverPill.hidden = false;
@@ -1800,7 +1948,10 @@ export class VillageEngine {
       this.gatePreviewOpenTimer = Math.max(0, this.gatePreviewOpenTimer - dt);
     }
 
-    const shouldOpenDoors = this.gateVisitors.length === 0 || this.gatePreviewOpenTimer > 0.8;
+    const conflictBlockingGate =
+      Boolean(this.activeGraph.mergeConflict?.active) && this.gatePreviewOpenTimer <= 0.8;
+    const shouldOpenDoors =
+      !conflictBlockingGate && (this.gateVisitors.length === 0 || this.gatePreviewOpenTimer > 0.8);
     const targetLeftRot = shouldOpenDoors ? 1.38 : 0;
     const targetRightRot = shouldOpenDoors ? -1.38 : 0;
     gate.leftDoorPivot.rotation.y +=
@@ -1811,10 +1962,14 @@ export class VillageEngine {
     for (const gv of this.gateVisitors) {
       const isHovered = gv === this.hoveredGateVisitor;
       const isSelected = gv === this.selectedGateVisitor;
+      const isActivelyConflicted =
+        gv.file.status === 'conflicted' &&
+        this.gatePreviewOpenTimer <= 0.8 &&
+        this.conflictRepairProgress === 0;
 
       const auraMat = gv.auraRing.material as THREE.MeshBasicMaterial;
-      const baseOpacity = gv.file.staged ? 0.58 : 0.25;
-      const targetOp = isSelected ? 0.95 : isHovered ? 0.78 : baseOpacity;
+      const baseOpacity = isActivelyConflicted ? 0.76 : gv.file.staged ? 0.58 : 0.25;
+      const targetOp = isSelected ? 0.98 : isHovered ? 0.84 : baseOpacity;
       auraMat.opacity += (targetOp - auraMat.opacity) * Math.min(1, dt * 10);
 
       if (gv.ticketMesh) {
@@ -1825,24 +1980,51 @@ export class VillageEngine {
       const dest = this.gatePreviewOpenTimer > 0.9 ? gv.rushTarget : gv.queueSlot;
       const distToDest = gv.root.position.distanceTo(dest);
 
+      if (gv.duelRig) {
+        if (isActivelyConflicted) {
+          gv.duelRig.clashSpark.visible = true;
+          gv.duelRig.clashSpark.rotation.y += dt * 5.2;
+          gv.duelRig.clashSpark.rotation.z -= dt * 3.4;
+          const lunge = Math.sin(elapsed * 9.5 + gv.phaseOffset);
+          const sep = 0.27 - Math.max(0, lunge) * 0.09;
+          gv.duelRig.oursBody.position.x = -sep;
+          gv.duelRig.theirsBody.position.x = sep;
+          gv.duelRig.oursBody.rotation.y = Math.PI / 2;
+          gv.duelRig.theirsBody.rotation.y = -Math.PI / 2;
+          gv.duelRig.oursArm.rotation.x = -1.6 + lunge * 0.85;
+          gv.duelRig.theirsArm.rotation.x = -1.6 + lunge * 0.85;
+          gv.duelRig.clashSpark.scale.setScalar(0.85 + Math.max(0, lunge) * 0.48);
+        } else {
+          gv.duelRig.clashSpark.visible = false;
+          gv.duelRig.oursBody.position.x = -0.22;
+          gv.duelRig.theirsBody.position.x = 0.22;
+          gv.duelRig.theirsBody.rotation.y = gv.duelRig.oursBody.rotation.y;
+          gv.duelRig.theirsArm.rotation.x = gv.rightArm.rotation.x;
+          gv.duelRig.theirsBody.position.y = gv.jumpY;
+        }
+      }
+
       if (distToDest > 0.08) {
         const dirX = dest.x - gv.root.position.x;
         const dirZ = dest.z - gv.root.position.z;
         gv.root.position.lerp(dest, Math.min(1, dt * 3.4));
         gv.bodyGroup.rotation.y = Math.atan2(dirX, dirZ);
+        if (gv.duelRig) {
+          gv.duelRig.theirsBody.rotation.y = gv.bodyGroup.rotation.y;
+        }
 
         const runCycle = elapsed * 14 + gv.phaseOffset;
         gv.leftLeg.rotation.x = Math.sin(runCycle) * 0.75;
         gv.rightLeg.rotation.x = -Math.sin(runCycle) * 0.75;
         gv.leftArm.rotation.x = -2.2 + Math.sin(runCycle) * 0.35;
         gv.rightArm.rotation.x = -2.2 - Math.sin(runCycle) * 0.35;
-      } else if (isHovered) {
+      } else if (!isActivelyConflicted && isHovered) {
         const dx = this.camera.position.x - gv.root.position.x;
         const dz = this.camera.position.z - gv.root.position.z;
         gv.bodyGroup.rotation.y = Math.atan2(dx, dz);
         gv.rightArm.rotation.x = -2.35 + Math.sin(elapsed * 14) * 0.45;
         gv.leftArm.rotation.x = -0.4;
-      } else {
+      } else if (!isActivelyConflicted) {
         const peekSway = Math.sin(elapsed * 2.1 + gv.phaseOffset) * 0.22;
         gv.bodyGroup.rotation.y = -Math.PI / 2 + peekSway;
         gv.rightArm.rotation.x = -1.9 + Math.sin(elapsed * 8 + gv.phaseOffset) * 0.55;
@@ -2664,6 +2846,45 @@ export class VillageEngine {
         this.builtWorld.animatedProps.headBeacon.position.y =
           1.55 + Math.sin(elapsed * 2.6) * 0.16;
       }
+      for (const rift of this.builtWorld.animatedProps.conflictRifts) {
+        rift.rotation.y += dt * 2.8;
+        rift.position.y = 0.72 + Math.sin(elapsed * 4.2) * 0.14;
+      }
+      if (this.builtWorld.animatedProps.conflictGateBarrier && this.conflictRepairProgress === 0) {
+        const pulse = 1 + Math.sin(elapsed * 6.0) * 0.05;
+        this.builtWorld.animatedProps.conflictGateBarrier.scale.setScalar(pulse);
+      }
+      if (this.conflictRepairProgress > 0 && this.conflictRepairProgress < 1) {
+        this.conflictRepairProgress = Math.min(1, this.conflictRepairProgress + dt * 1.15);
+        const t = this.conflictRepairProgress;
+        const ease = 1 - Math.pow(1 - t, 3);
+
+        for (const br of this.builtWorld.bridges) {
+          if (br.conflictRiftGroup) {
+            const shrink = Math.max(0.001, 1 - ease);
+            br.conflictRiftGroup.scale.setScalar(shrink);
+            if (t >= 1) br.conflictRiftGroup.visible = false;
+          }
+          if (br.brokenPlanks) {
+            for (const bp of br.brokenPlanks) {
+              bp.mesh.position.lerpVectors(bp.brokenPos, bp.healedPos, ease);
+              bp.mesh.rotation.set(
+                bp.brokenRot.x + (bp.healedRot.x - bp.brokenRot.x) * ease,
+                bp.brokenRot.y + (bp.healedRot.y - bp.brokenRot.y) * ease,
+                bp.brokenRot.z + (bp.healedRot.z - bp.brokenRot.z) * ease,
+              );
+              if (bp.hiddenWhenBroken) {
+                bp.mesh.scale.setScalar(Math.max(0.001, ease));
+              }
+            }
+          }
+        }
+        if (this.builtWorld.animatedProps.conflictGateBarrier) {
+          const shrink = Math.max(0.001, 1 - ease);
+          this.builtWorld.animatedProps.conflictGateBarrier.scale.setScalar(shrink);
+          if (t >= 1) this.builtWorld.animatedProps.conflictGateBarrier.visible = false;
+        }
+      }
       if (this.builtWorld.animatedProps.fireflies) {
         this.builtWorld.animatedProps.fireflies.rotation.y = Math.sin(elapsed * 0.12) * 0.15;
       }
@@ -2780,6 +3001,9 @@ export class VillageEngine {
         self.focusOnGateVisitor(gv, play, move),
       flyToOverview: () => self.flyToOverview(),
       flyToGate: (sel = true) => self.flyToGate(sel),
+      flyToConflictZone: (sel = true) => self.flyToConflictZone(sel),
+      loadConflictDemo: (u = false) => self.loadConflictDemo(u),
+      resolveSimulatedConflict: () => self.resolveSimulatedConflict(),
       applyAtmosphere: (m: TimeOfDay) => self.applyAtmosphere(m),
       setCameraMode: (m: CameraMode) => self.setCameraMode(m),
       triggerGatePreviewOpen: () => self.triggerGatePreviewOpen(),

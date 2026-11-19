@@ -154,7 +154,10 @@ export default function VillageIndex({
 
     engineRef.current = engine;
 
-    if (localServerEnabled && initialLocal) {
+    const initialConflictParam = new URLSearchParams(window.location.search).get('conflict');
+    if (initialConflictParam === '1' || initialConflictParam === 'true') {
+      engine.loadConflictDemo(false);
+    } else if (localServerEnabled && initialLocal) {
       void engine.loadLocalRepo(initialLocal, false, initialBranch ?? undefined);
     } else if (initialRepo) {
       void engine.loadRepoBySpec(initialRepo, false, initialBranch ?? undefined);
@@ -325,24 +328,33 @@ export default function VillageIndex({
       };
     }
     const v = sel.visitor;
+    const isConflicted = v.status === 'conflicted';
     return {
       title: v.filename.split('/').pop() || v.filename,
-      subtitle: `${v.filename} · ${v.staged ? 'Staged at Gate' : 'Working-tree change'}`,
-      badge: snapshot.graph.defaultBranch,
+      subtitle: isConflicted
+        ? `${v.filename} · Merge Conflict (${v.conflict?.oursLabel ?? 'HEAD'} ⚡ ${v.conflict?.theirsLabel ?? 'incoming'})`
+        : `${v.filename} · ${v.staged ? 'Staged at Gate' : 'Working-tree change'}`,
+      badge: isConflicted
+        ? `${v.conflict?.oursLabel ?? snapshot.graph.defaultBranch} ⚡ ${v.conflict?.theirsLabel ?? 'incoming'}`
+        : snapshot.graph.defaultBranch,
+      canResolveConflict: Boolean(snapshot.graph.mergeConflict?.active),
       files: [
         {
           filename: v.filename,
           status:
-            v.status === 'added' || v.status === 'untracked'
-              ? 'added'
-              : v.status === 'deleted'
-                ? 'removed'
-                : v.status === 'renamed'
-                  ? 'renamed'
-                  : 'modified',
+            v.status === 'conflicted'
+              ? 'conflicted'
+              : v.status === 'added' || v.status === 'untracked'
+                ? 'added'
+                : v.status === 'deleted'
+                  ? 'removed'
+                  : v.status === 'renamed'
+                    ? 'renamed'
+                    : 'modified',
           additions: v.additions,
           deletions: v.deletions,
           patch: v.diffPreview,
+          conflict: v.conflict,
         },
       ],
     };
@@ -400,6 +412,7 @@ export default function VillageIndex({
         onToggleWalkMode={() => engineRef.current?.toggleWalkMode()}
         onCycleSky={() => engineRef.current?.cycleAtmosphere()}
         onToggleCiStorm={handleToggleCiStorm}
+        onFocusConflict={() => engineRef.current?.flyToConflictZone(true)}
         onToggleMute={() => engineRef.current?.toggleMute()}
         onShare={openShareStudio}
       />
@@ -425,6 +438,7 @@ export default function VillageIndex({
         onSelectRepo={(slug) => void engineRef.current?.loadRepoBySpec(slug, true)}
         onSelectLocalPath={(p) => void engineRef.current?.loadLocalRepo(p, true)}
         onOpenLocalModal={openLocalModal}
+        onLoadConflictDemo={() => engineRef.current?.loadConflictDemo(true)}
       />
 
       <CensusPopover
@@ -444,10 +458,15 @@ export default function VillageIndex({
       <BottomFilterDock
         activeFilter={snapshot.activeFilter}
         isLocal={Boolean(snapshot.graph.isLocal)}
+        hasConflict={Boolean(snapshot.graph.mergeConflict?.active)}
         gateVisitorsCount={snapshot.gateVisitorsCount}
         timeLapseActive={snapshot.timeLapse.active}
         onSelectFilter={(f) => engineRef.current?.setFilter(f)}
-        onFlyToGate={() => engineRef.current?.flyToGate(true)}
+        onFlyToGate={() =>
+          snapshot.graph.mergeConflict?.active
+            ? engineRef.current?.flyToConflictZone(true)
+            : engineRef.current?.flyToGate(true)
+        }
         onStartTimeLapse={() => {
           if (snapshot.timeLapse.active) {
             engineRef.current?.stopTimeLapse();
@@ -495,6 +514,7 @@ export default function VillageIndex({
         payload={diffModalPayload}
         selectedFilename={diffSelectedFilename}
         onSelectFilename={setDiffSelectedFilename}
+        onResolveConflict={() => engineRef.current?.resolveSimulatedConflict()}
       />
 
       <LocalRepoDialog

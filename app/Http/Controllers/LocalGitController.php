@@ -245,8 +245,19 @@ class LocalGitController extends Controller
             ? $requestedBranch
             : $headBranch;
 
-        $orderedBranches = $activeBranch !== 'detached-HEAD'
-            ? array_values(array_unique(array_merge([$activeBranch], $branchNames)))
+        $mergeState = $this->detectMergeState($topLevel, $branchNames);
+        $theirsBranch = $mergeState['theirsBranch'] ?? null;
+
+        $priorityBranches = [];
+        if ($activeBranch !== 'detached-HEAD') {
+            $priorityBranches[] = $activeBranch;
+        }
+        if ($theirsBranch !== null && in_array($theirsBranch, $branchNames, true)) {
+            $priorityBranches[] = $theirsBranch;
+        }
+
+        $orderedBranches = $priorityBranches !== []
+            ? array_values(array_unique(array_merge($priorityBranches, $branchNames)))
             : $branchNames;
         $selectedBranches = array_slice($orderedBranches, 0, 6);
 
@@ -273,7 +284,26 @@ class LocalGitController extends Controller
             }
         }
 
-        $gateVisitors = $this->collectGateVisitors($topLevel);
+        $gateVisitors = $this->collectGateVisitors(
+            $topLevel,
+            $headBranch !== 'detached-HEAD' ? $headBranch : 'HEAD',
+            $theirsBranch ?? 'incoming-branch'
+        );
+
+        $conflictedCount = count(array_filter(
+            $gateVisitors,
+            static fn (array $v): bool => ($v['status'] ?? '') === 'conflicted'
+        ));
+
+        $mergeConflict = ($mergeState !== null || $conflictedCount > 0) && $activeBranch === $headBranch
+            ? [
+                'active' => true,
+                'oursBranch' => $headBranch !== 'detached-HEAD' ? $headBranch : 'HEAD',
+                'theirsBranch' => $theirsBranch ?? 'incoming-branch',
+                'conflictedCount' => max(1, $conflictedCount),
+                'mergeHeadSha' => $mergeState['mergeHeadSha'] ?? null,
+            ]
+            : null;
 
         return response()->json([
             'owner' => $ownerName,
@@ -285,6 +315,7 @@ class LocalGitController extends Controller
             'branches' => $branchesPayload,
             'gateVisitors' => array_slice($gateVisitors, 0, 48),
             'totalChangedFiles' => count($gateVisitors),
+            'mergeConflict' => $mergeConflict,
         ]);
     }
 
@@ -551,10 +582,84 @@ class LocalGitController extends Controller
     }
 
     /**
+     * @param  array<int, string>  $branchNames
+     * @return array{mergeHeadSha: string, theirsBranch: string|null}|null
+     */
+    private function detectMergeState(string $topLevel, array $branchNames): ?array
+    {
+        $headPathRes = $this->runGit($topLevel, ['rev-parse', '--git-path', 'MERGE_HEAD']);
+        if (! $headPathRes['ok'] || trim($headPathRes['stdout']) === '') {
+            return null;
+        }
+        $rawHeadPath = trim($headPathRes['stdout']);
+        $mergeHeadFile = str_starts_with($rawHeadPath, DIRECTORY_SEPARATOR)
+            ? $rawHeadPath
+            : $topLevel.DIRECTORY_SEPARATOR.$rawHeadPath;
+
+        if (! is_file($mergeHeadFile)) {
+            return null;
+        }
+
+        $headLines = explode("\n", trim((string) @file_get_contents($mergeHeadFile)));
+        $mergeHeadSha = strtolower(trim($headLines[0] ?? ''));
+        if (! preg_match('/^[0-9a-f]{40}$/', $mergeHeadSha)) {
+            return null;
+        }
+
+        $theirsBranch = null;
+        $msgPathRes = $this->runGit($topLevel, ['rev-parse', '--git-path', 'MERGE_MSG']);
+        if ($msgPathRes['ok'] && trim($msgPathRes['stdout']) !== '') {
+            $rawMsgPath = trim($msgPathRes['stdout']);
+            $mergeMsgFile = str_starts_with($rawMsgPath, DIRECTORY_SEPARATOR)
+                ? $rawMsgPath
+                : $topLevel.DIRECTORY_SEPARATOR.$rawMsgPath;
+            if (is_file($mergeMsgFile)) {
+                $firstLine = strtok((string) @file_get_contents($mergeMsgFile), "\r\n") ?: '';
+                if (preg_match("/Merge (?:remote-tracking )?branch '([^']+)'/", $firstLine, $m)) {
+                    $candidate = $m[1];
+                    if (str_starts_with($candidate, 'origin/') && in_array(substr($candidate, 7), $branchNames, true)) {
+                        $candidate = substr($candidate, 7);
+                    }
+                    $theirsBranch = $candidate;
+                }
+            }
+        }
+
+        if ($theirsBranch === null) {
+            foreach ($branchNames as $bName) {
+                $tipRes = $this->runGit($topLevel, ['rev-parse', "refs/heads/{$bName}"]);
+                if ($tipRes['ok'] && strtolower(trim($tipRes['stdout'])) === $mergeHeadSha) {
+                    $theirsBranch = $bName;
+                    break;
+                }
+            }
+        }
+
+        if ($theirsBranch === null) {
+            $nameRev = $this->runGit($topLevel, ['name-rev', '--name-only', '--no-undefined', $mergeHeadSha]);
+            if ($nameRev['ok'] && trim($nameRev['stdout']) !== '') {
+                $clean = preg_replace('/^remotes\/origin\//', '', trim($nameRev['stdout']));
+                $clean = preg_replace('/[~^].*$/', '', (string) $clean);
+                if ($clean !== '') {
+                    $theirsBranch = $clean;
+                }
+            }
+        }
+
+        return [
+            'mergeHeadSha' => $mergeHeadSha,
+            'theirsBranch' => $theirsBranch ?: substr($mergeHeadSha, 0, 7),
+        ];
+    }
+
+    /**
      * @return array<int, array<string, mixed>>
      */
-    private function collectGateVisitors(string $topLevel): array
-    {
+    private function collectGateVisitors(
+        string $topLevel,
+        string $oursLabel = 'HEAD',
+        string $theirsLabel = 'incoming',
+    ): array {
         $statusRes = $this->runGit($topLevel, ['status', '--porcelain=v1', '-z', '-uall']);
         if (! $statusRes['ok'] || $statusRes['stdout'] === '') {
             return [];
@@ -581,22 +686,34 @@ class LocalGitController extends Controller
                 $i++;
             }
 
-            $staged = $x !== ' ' && $x !== '?' && $x !== '!';
+            $isUnmerged = $x === 'U' || $y === 'U' || $xy === 'AA' || $xy === 'DD';
+            $staged = ! $isUnmerged && $x !== ' ' && $x !== '?' && $x !== '!';
             $code = $xy === '??' ? '?' : ($staged ? $x : $y);
-            $status = match ($code) {
+            $status = $isUnmerged ? 'conflicted' : match ($code) {
                 '?' => 'untracked',
                 'A' => 'added',
                 'D' => 'deleted',
                 'R' => 'renamed',
-                'U' => 'conflicted',
                 default => 'modified',
             };
 
             $add = ($stagedStats[$filepath]['add'] ?? 0) + ($unstagedStats[$filepath]['add'] ?? 0);
             $del = ($stagedStats[$filepath]['del'] ?? 0) + ($unstagedStats[$filepath]['del'] ?? 0);
             $preview = null;
+            $conflict = null;
 
-            if ($status === 'untracked') {
+            if ($status === 'conflicted') {
+                $extracted = $this->extractConflictedFileDetails(
+                    $topLevel,
+                    $filepath,
+                    $oursLabel,
+                    $theirsLabel
+                );
+                $conflict = $extracted['conflict'];
+                $preview = $extracted['diffPreview'];
+                $add = max($add, $extracted['additions']);
+                $del = max($del, $extracted['deletions']);
+            } elseif ($status === 'untracked') {
                 $abs = $topLevel.DIRECTORY_SEPARATOR.$filepath;
                 if (is_file($abs) && filesize($abs) <= 96_000) {
                     $raw = (string) @file_get_contents($abs);
@@ -626,7 +743,7 @@ class LocalGitController extends Controller
                 }
             }
 
-            $visitors[] = [
+            $visitorItem = [
                 'filename' => $filepath,
                 'status' => $status,
                 'staged' => $staged,
@@ -634,9 +751,165 @@ class LocalGitController extends Controller
                 'deletions' => $del,
                 'diffPreview' => $preview,
             ];
+            if ($conflict !== null) {
+                $visitorItem['conflict'] = $conflict;
+            }
+            $visitors[] = $visitorItem;
         }
 
         return $visitors;
+    }
+
+    /**
+     * @return array{conflict: array<string, mixed>, diffPreview: string, additions: int, deletions: int}
+     */
+    private function extractConflictedFileDetails(
+        string $topLevel,
+        string $filepath,
+        string $oursLabel,
+        string $theirsLabel,
+    ): array {
+        $abs = $topLevel.DIRECTORY_SEPARATOR.$filepath;
+        if (is_file($abs) && filesize($abs) <= 128_000) {
+            $raw = (string) @file_get_contents($abs);
+            if (! str_contains(substr($raw, 0, 512), "\0")) {
+                $lines = explode("\n", str_replace("\r\n", "\n", $raw));
+                $lineCount = count($lines);
+                $hunks = [];
+                $idx = 0;
+
+                while ($idx < $lineCount) {
+                    if (! str_starts_with($lines[$idx], '<<<<<<<')) {
+                        $idx++;
+
+                        continue;
+                    }
+                    $startLine = $idx + 1;
+                    $hOursLabel = trim(substr($lines[$idx], 7)) ?: $oursLabel;
+                    $ctxBefore = array_slice($lines, max(0, $idx - 2), min(2, $idx));
+                    $oursLines = [];
+                    $theirsLines = [];
+                    $state = 'ours';
+                    $hTheirsLabel = $theirsLabel;
+                    $foundEnd = false;
+                    $idx++;
+
+                    while ($idx < $lineCount) {
+                        $cur = $lines[$idx];
+                        if ($state === 'ours' && str_starts_with($cur, '|||||||')) {
+                            $state = 'base';
+                        } elseif (($state === 'ours' || $state === 'base') && str_starts_with($cur, '=======')) {
+                            $state = 'theirs';
+                        } elseif ($state === 'theirs' && str_starts_with($cur, '>>>>>>>')) {
+                            $hTheirsLabel = trim(substr($cur, 7)) ?: $theirsLabel;
+                            $foundEnd = true;
+                            $idx++;
+                            break;
+                        } elseif ($state === 'ours') {
+                            $oursLines[] = $cur;
+                        } elseif ($state === 'theirs') {
+                            $theirsLines[] = $cur;
+                        }
+                        $idx++;
+                    }
+
+                    if ($foundEnd) {
+                        $ctxAfter = array_slice($lines, $idx, 2);
+                        $hunks[] = [
+                            'startLine' => $startLine,
+                            'oursLabel' => $hOursLabel,
+                            'theirsLabel' => $hTheirsLabel,
+                            'ctxBefore' => $ctxBefore,
+                            'oursLines' => $oursLines,
+                            'theirsLines' => $theirsLines,
+                            'ctxAfter' => $ctxAfter,
+                        ];
+                    }
+                }
+
+                if ($hunks !== []) {
+                    $oursBlocks = [];
+                    $theirsBlocks = [];
+                    $previewLines = [];
+                    $totalOurs = 0;
+                    $totalTheirs = 0;
+                    $hunkTotal = count($hunks);
+
+                    foreach (array_slice($hunks, 0, 6) as $hIdx => $h) {
+                        $totalOurs += count($h['oursLines']);
+                        $totalTheirs += count($h['theirsLines']);
+                        $num = $hIdx + 1;
+                        $hdr = $hunkTotal > 1
+                            ? "// Conflict #{$num} (line {$h['startLine']})"
+                            : "// Line {$h['startLine']}";
+                        $oursBlocks[] = implode("\n", array_merge([$hdr], $h['ctxBefore'], $h['oursLines'], $h['ctxAfter']));
+                        $theirsBlocks[] = implode("\n", array_merge([$hdr], $h['ctxBefore'], $h['theirsLines'], $h['ctxAfter']));
+
+                        $oldSpan = count($h['ctxBefore']) + count($h['oursLines']) + count($h['ctxAfter']);
+                        $newSpan = count($h['ctxBefore']) + count($h['theirsLines']) + count($h['ctxAfter']);
+                        $previewLines[] = "@@ -{$h['startLine']},{$oldSpan} +{$h['startLine']},{$newSpan} @@ Conflict #{$num}";
+                        foreach ($h['ctxBefore'] as $c) {
+                            $previewLines[] = ' '.$c;
+                        }
+                        $previewLines[] = '<<<<<<< '.$h['oursLabel'];
+                        foreach ($h['oursLines'] as $ol) {
+                            $previewLines[] = '-'.$ol;
+                        }
+                        $previewLines[] = '=======';
+                        foreach ($h['theirsLines'] as $tl) {
+                            $previewLines[] = '+'.$tl;
+                        }
+                        $previewLines[] = '>>>>>>> '.$h['theirsLabel'];
+                        foreach ($h['ctxAfter'] as $c) {
+                            $previewLines[] = ' '.$c;
+                        }
+                    }
+
+                    return [
+                        'conflict' => [
+                            'oursLabel' => $hunks[0]['oursLabel'],
+                            'theirsLabel' => $hunks[0]['theirsLabel'],
+                            'oursContent' => substr(implode("\n\n", $oursBlocks), 0, 8000),
+                            'theirsContent' => substr(implode("\n\n", $theirsBlocks), 0, 8000),
+                            'conflictMarkersCount' => $hunkTotal,
+                        ],
+                        'diffPreview' => substr(implode("\n", $previewLines), 0, 10000),
+                        'additions' => max(1, $totalTheirs),
+                        'deletions' => max(1, $totalOurs),
+                    ];
+                }
+            }
+        }
+
+        // Stage :2: (ours) vs :3: (theirs) fallback for modify/delete or binary conflicts
+        $stage2 = $this->runGit($topLevel, ['show', ":2:{$filepath}"]);
+        $stage3 = $this->runGit($topLevel, ['show', ":3:{$filepath}"]);
+        $oursRaw = $stage2['ok'] ? rtrim(str_replace("\r\n", "\n", $stage2['stdout']), "\n") : '(deleted on HEAD)';
+        $theirsRaw = $stage3['ok'] ? rtrim(str_replace("\r\n", "\n", $stage3['stdout']), "\n") : '(deleted on incoming branch)';
+        $oursSample = array_slice(explode("\n", $oursRaw), 0, 40);
+        $theirsSample = array_slice(explode("\n", $theirsRaw), 0, 40);
+
+        $preview = implode("\n", array_merge(
+            ['@@ -1,'.count($oursSample).' +1,'.count($theirsSample).' @@ Unmerged index stages'],
+            ['<<<<<<< '.$oursLabel],
+            array_map(static fn (string $l): string => '-'.$l, $oursSample),
+            ['======='],
+            array_map(static fn (string $l): string => '+'.$l, $theirsSample),
+            ['>>>>>>> '.$theirsLabel]
+        ));
+
+        return [
+            'conflict' => [
+                'oursLabel' => $oursLabel,
+                'theirsLabel' => $theirsLabel,
+                'oursContent' => implode("\n", $oursSample),
+                'theirsContent' => implode("\n", $theirsSample),
+                'conflictMarkersCount' => 1,
+            ],
+            'diffPreview' => substr($preview, 0, 10000),
+            'additions' => max(1, count($theirsSample)),
+            'deletions' => max(1, count($oursSample)),
+        ];
     }
 
     /**

@@ -1103,6 +1103,13 @@ export function getVisitorStatusMeta(status: WorkingTreeStatus): {
   emotes: string[];
 } {
   switch (status) {
+    case 'conflicted':
+      return {
+        label: 'Merge Conflict',
+        dotClass: 'dot-red',
+        color: 0xff453a,
+        emotes: ['⚔️', '⚡', '💥'],
+      };
     case 'untracked':
       return { label: 'Untracked File', dotClass: 'dot-green', color: 0x30d158, emotes: ['🌱', '🙋', '🔔'] };
     case 'added':
@@ -1258,25 +1265,141 @@ export function createGateVisitorEntity(
     ticketMesh = ticket;
   }
 
-  // Ground ring (gold for staged, sky-cyan/amber for unstaged)
+  // Ground ring (crimson pulse for conflicted, gold for staged, sky-cyan/amber for unstaged)
+  const isConflicted = file.status === 'conflicted';
   const auraMat = new THREE.MeshBasicMaterial({
-    color: file.staged ? 0xfacc15 : meta.color,
+    color: isConflicted ? 0xff453a : file.staged ? 0xfacc15 : meta.color,
     transparent: true,
-    opacity: file.staged ? 0.55 : 0.22,
+    opacity: isConflicted ? 0.72 : file.staged ? 0.55 : 0.22,
     side: THREE.DoubleSide,
     depthWrite: false,
   });
   const auraRing = new THREE.Mesh(auraGeo, auraMat);
   auraRing.position.y = 0.04;
+  if (isConflicted) {
+    auraRing.scale.setScalar(1.38);
+  }
   root.add(auraRing);
 
+  // Dueling Ours vs Theirs Rig when file has an unresolved Merge Conflict!
+  let duelRig: GateVisitorEntity['duelRig'];
+  if (isConflicted) {
+    bodyGroup.scale.setScalar(0.84);
+    bodyGroup.position.set(-0.28, 0, 0);
+    // Tint primary traveler ("Ours") in bright cyan-cobalt with glowing cyan clash blade
+    coatMat.color.setHex(0x0ea5e9);
+    const oursBlade = new THREE.Mesh(
+      new THREE.BoxGeometry(0.06, 0.44, 0.09),
+      new THREE.MeshStandardMaterial({
+        color: 0x38bdf8,
+        emissive: 0x0284c7,
+        emissiveIntensity: 0.95,
+      }),
+    );
+    oursBlade.position.set(0, -0.28, 0.18);
+    oursBlade.rotation.x = Math.PI / 2.6;
+    rightArm.add(oursBlade);
+
+    // Build rival "Theirs" traveler facing "Ours" on the same pier slot!
+    const rivalBody = new THREE.Group();
+    rivalBody.scale.setScalar(0.84);
+    rivalBody.position.set(0.28, 0, 0);
+    rivalBody.rotation.y = -Math.PI / 2;
+
+    const rivalCoatMat = new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.52 });
+    const rivalSkinMat = new THREE.MeshStandardMaterial({
+      color: SKIN_TONES[(seed + 2) % SKIN_TONES.length],
+      roughness: 0.7,
+    });
+    const rTorso = new THREE.Mesh(torsoGeo, rivalCoatMat);
+    rTorso.position.y = 0.48;
+    rTorso.castShadow = true;
+    rivalBody.add(rTorso);
+
+    for (const sgn of [-1, 1]) {
+      const rLeg = new THREE.Mesh(limbGeo, pantsMat);
+      rLeg.position.set(sgn * 0.11, 0.14, 0);
+      rivalBody.add(rLeg);
+    }
+
+    const rLeftArm = new THREE.Group();
+    rLeftArm.position.set(-0.28, 0.64, 0);
+    const rLaMesh = new THREE.Mesh(limbGeo, rivalSkinMat);
+    rLaMesh.position.y = -0.12;
+    rLeftArm.add(rLaMesh);
+
+    const rRightArm = new THREE.Group();
+    rRightArm.position.set(0.28, 0.64, 0);
+    const rRaMesh = new THREE.Mesh(limbGeo, rivalSkinMat);
+    rRaMesh.position.y = -0.12;
+    rRightArm.add(rRaMesh);
+
+    const theirsBlade = new THREE.Mesh(
+      new THREE.BoxGeometry(0.07, 0.44, 0.1),
+      new THREE.MeshStandardMaterial({
+        color: 0xfbbf24,
+        emissive: 0xef4444,
+        emissiveIntensity: 0.95,
+      }),
+    );
+    theirsBlade.position.set(0, -0.28, 0.18);
+    theirsBlade.rotation.x = Math.PI / 2.6;
+    rRightArm.add(theirsBlade);
+    rivalBody.add(rLeftArm, rRightArm);
+
+    const rHead = new THREE.Group();
+    rHead.position.set(0, 0.94, 0);
+    const rHeadMesh = new THREE.Mesh(headGeo, rivalSkinMat);
+    rHeadMesh.castShadow = true;
+    const rlEye = new THREE.Mesh(eyeGeo, eyeMat);
+    rlEye.position.set(-0.1, 0.03, 0.225);
+    const rrEye = new THREE.Mesh(eyeGeo, eyeMat);
+    rrEye.position.set(0.1, 0.03, 0.225);
+    const rCap = new THREE.Mesh(
+      new THREE.ConeGeometry(0.27, 0.26, 6),
+      new THREE.MeshStandardMaterial({ color: 0xef4444, roughness: 0.5 }),
+    );
+    rCap.position.y = 0.28;
+    rHead.add(rHeadMesh, rlEye, rrEye, rCap);
+    rivalBody.add(rHead);
+    root.add(rivalBody);
+
+    // Spinning crimson-gold clash spark between the two arguing file versions!
+    const clashSpark = new THREE.Group();
+    clashSpark.position.set(0, 0.88, 0);
+    const sparkCore = new THREE.Mesh(
+      new THREE.OctahedronGeometry(0.18, 0),
+      new THREE.MeshBasicMaterial({ color: 0xfef08a }),
+    );
+    const sparkHalo = new THREE.Mesh(
+      new THREE.TorusGeometry(0.25, 0.025, 5, 12),
+      new THREE.MeshBasicMaterial({ color: 0xff453a }),
+    );
+    clashSpark.add(sparkCore, sparkHalo);
+    root.add(clashSpark);
+
+    bodyGroup.rotation.y = Math.PI / 2;
+    duelRig = {
+      oursBody: bodyGroup,
+      theirsBody: rivalBody,
+      oursArm: rightArm,
+      theirsArm: rRightArm,
+      clashSpark,
+    };
+  }
+
   const hitBox = new THREE.Mesh(hitBoxGeo, hitBoxMat);
+  if (isConflicted) {
+    hitBox.scale.set(1.5, 1.1, 1.5);
+  }
   hitBox.userData.visitorIndex = index;
   root.add(hitBox);
 
   root.position.copy(queueSlot);
-  // Face -X toward the Village Gate!
-  bodyGroup.rotation.y = -Math.PI / 2;
+  if (!isConflicted) {
+    // Face -X toward the Village Gate!
+    bodyGroup.rotation.y = -Math.PI / 2;
+  }
 
   return {
     file,
@@ -1291,6 +1414,7 @@ export function createGateVisitorEntity(
     cargoGroup,
     burden: visitorBurden,
     ticketMesh,
+    duelRig,
     auraRing,
     hitBox,
     queueSlot: queueSlot.clone(),

@@ -94,6 +94,13 @@ export type AnalyticsEventMap = {
     repo_slug: string;
     commit_count: number;
   };
+  merge_conflict_demo_loaded: {
+    conflicted_files: number;
+  };
+  merge_conflict_resolved_preview: {
+    repo_type: 'demo' | 'github' | 'local';
+    repo_slug: string;
+  };
 };
 
 /**

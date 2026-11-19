@@ -11,6 +11,7 @@ interface PresetsPopoverProps {
   onSelectRepo: (slug: string) => void;
   onSelectLocalPath: (path: string) => void;
   onOpenLocalModal: () => void;
+  onLoadConflictDemo: () => void;
 }
 
 export function PresetsPopover({
@@ -21,6 +22,7 @@ export function PresetsPopover({
   onSelectRepo,
   onSelectLocalPath,
   onOpenLocalModal,
+  onLoadConflictDemo,
 }: PresetsPopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const [discoveredRepos, setDiscoveredRepos] = useState<DiscoveredLocalRepo[]>([]);
@@ -99,6 +101,21 @@ export function PresetsPopover({
                 ? 'Browse directories or select any Git folder'
                 : 'Inspect any Git folder on your device · private in browser'}
             </span>
+          </button>
+          <button
+            type="button"
+            id="presets-conflict-demo-btn"
+            className="preset-card preset-card-conflict"
+            onClick={() => {
+              hidePopover();
+              onLoadConflictDemo();
+            }}
+          >
+            <div className="preset-card-head">
+              <strong>⚔️ Merge Conflict Storm</strong>
+              <span className="status-dot dot-red" aria-hidden="true" />
+            </div>
+            <span>Fractured merge bridge, dueling Gate files &amp; Ours vs Theirs diff</span>
           </button>
         </div>
       </div>

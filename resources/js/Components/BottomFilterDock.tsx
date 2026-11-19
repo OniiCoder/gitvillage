@@ -4,6 +4,7 @@ import { sound } from '@/lib/sound';
 interface BottomFilterDockProps {
   activeFilter: string;
   isLocal: boolean;
+  hasConflict?: boolean;
   gateVisitorsCount: number;
   timeLapseActive: boolean;
   onSelectFilter: (filter: string) => void;
@@ -25,6 +26,7 @@ const FILTERS: Array<{ id: string; label: string; dotClass?: string }> = [
 export function BottomFilterDock({
   activeFilter,
   isLocal,
+  hasConflict = false,
   gateVisitorsCount,
   timeLapseActive,
   onSelectFilter,
@@ -56,11 +58,11 @@ export function BottomFilterDock({
       <span className="ornament-divider" aria-hidden="true" />
 
       <div className="dock-quick-actions">
-        {isLocal && (
+        {(isLocal || gateVisitorsCount > 0 || hasConflict) && (
           <button
             type="button"
             id="gate-dock-btn"
-            className="dock-action-btn gate-pill"
+            className={`dock-action-btn gate-pill${hasConflict ? ' is-conflicted' : ''}`}
             title="Focus Village Gate and uncommitted file visitors"
             onClick={() => {
               sound.playPop(587.33);
@@ -69,10 +71,12 @@ export function BottomFilterDock({
           >
             <span
               id="gate-status-dot"
-              className={`status-dot ${gateVisitorsCount > 0 ? 'dot-amber' : 'dot-green'}`}
+              className={`status-dot ${hasConflict ? 'dot-red' : gateVisitorsCount > 0 ? 'dot-amber' : 'dot-green'}`}
               aria-hidden="true"
             />
-            <span id="gate-dock-label">Gate · {gateVisitorsCount}</span>
+            <span id="gate-dock-label">
+              {hasConflict ? `⚔️ Gate · ${gateVisitorsCount}` : `Gate · ${gateVisitorsCount}`}
+            </span>
           </button>
         )}
 
