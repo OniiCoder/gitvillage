@@ -1,4 +1,5 @@
 import { parseConflictMarkersFromText } from './conflictParser';
+import { enrichVillageGraphInsights } from './gitInsights';
 import type {
   BranchIslandData,
   CommitData,
@@ -400,7 +401,7 @@ export function createDemoRepoGraph(): RepoVillageGraph {
       authorName: 'Jun Takahashi',
       minutesAgo: 60 * 35,
       subject: 'feat(sky): paint golden-hour sunset & twinkling night fireflies',
-      body: 'Adds three atmospheric lighting presets with smooth hemisphere color transitions and glowing cottage windows.',
+      body: 'Adds three atmospheric lighting presets with smooth hemisphere color transitions and glowing cottage windows.\n\nCo-authored-by: Kael Vance <kael-voxel@gitvillage.dev>',
       files: [
         { filename: 'src/world/atmosphere.ts', status: 'added', additions: 156, deletions: 0 },
         { filename: 'src/world/cottages.ts', status: 'modified', additions: 41, deletions: 8 },
@@ -432,7 +433,7 @@ export function createDemoRepoGraph(): RepoVillageGraph {
       parents: ['e0763672d81a7394f5ead827b8594a3bc7685941'],
       authorLogin: 'tali-scribes',
       authorName: 'Tali Okafor',
-      minutesAgo: 60 * 24,
+      minutesAgo: 60 * 24 * 69,
       subject: 'docs(taxonomy): illustrate field guide to Builders, Bug-Hunters & Mayors',
       body: 'Catalogs every hat, tool, and celebratory jump pattern exhibited by different conventional commit prefixes.',
       files: [
@@ -446,7 +447,7 @@ export function createDemoRepoGraph(): RepoVillageGraph {
       parents: ['a666f9a50b4da6c7281df15aeb8c7d6efa9b8c7d'],
       authorLogin: 'tali-scribes',
       authorName: 'Tali Okafor',
-      minutesAgo: 60 * 14,
+      minutesAgo: 60 * 24 * 64,
       subject: 'docs(api): add GitHub rate-limit tips and shareable ?repo= URL examples',
       body: 'Explains how public repositories stream straight into WebGL without a backend server.',
       files: [
@@ -523,7 +524,7 @@ export function createDemoRepoGraph(): RepoVillageGraph {
       authorName: 'Soren Lindqvist',
       minutesAgo: 60 * 4,
       subject: 'fix(inspector): preserve parent/child lineage hops across merged islands',
-      body: 'Ensures clicking Parent or Child smoothly arcs the camera over suspension bridges to the target villager.',
+      body: 'Ensures clicking Parent or Child smoothly arcs the camera over suspension bridges to the target villager.\n\n(cherry picked from commit d444d783e92b84a506fbe938c96a5b4cd8796a5b)',
       files: [
         { filename: 'src/ui/inspector.ts', status: 'modified', additions: 44, deletions: 12 },
       ],
@@ -537,7 +538,7 @@ export function createDemoRepoGraph(): RepoVillageGraph {
       authorName: 'Mira Lin',
       minutesAgo: 22,
       subject: 'feat(welcome): open village gates to any public GitHub repository!',
-      body: 'Paste any owner/repo in the top bar (or pick a preset) to watch its branches and commits materialize as living sky islands.',
+      body: 'Paste any owner/repo in the top bar (or pick a preset) to watch its branches and commits materialize as living sky islands.\n\nCo-authored-by: Soren Lindqvist <soren-rust@gitvillage.dev>',
       files: [
         { filename: 'src/githubLoader.ts', status: 'added', additions: 265, deletions: 0 },
         { filename: 'src/localLoader.ts', status: 'added', additions: 194, deletions: 0 },
@@ -636,7 +637,91 @@ export function createDemoRepoGraph(): RepoVillageGraph {
     };
   });
 
-  return {
+  const ghostCommits: CommitData[] = [
+    {
+      sha: 'dead001a9f8472615293847561029384dead0001',
+      shortSha: 'dead001',
+      subject: 'wip: experimental hex-grid terrain before git reset --hard',
+      body: 'Orphaned reflog commit (HEAD@{9}: reset: moving to HEAD~1) still preserved inside .git/objects until git gc.',
+      authorName: 'Mira Lin',
+      authorLogin: 'mira-architect',
+      timestamp: new Date(now - 38 * 3600_000).toISOString(),
+      branch: 'ghost-ruins',
+      parents: ['8a10f01c92b41d3e9f8472615293847561029384'],
+      children: [],
+      kind: 'feat',
+      isGhost: true,
+      reflogAction: 'git reset',
+      filesCount: 2,
+      stats: { additions: 96, deletions: 14, total: 110 },
+      files: [
+        {
+          filename: 'src/world/hexTerrain.ts',
+          status: 'added',
+          additions: 96,
+          deletions: 14,
+          patch: '@@ -0,0 +1,6 @@\n+// Replaced by octagonal floating islands\n+export function buildHexGrid(radius = 8) {\n+  return Array.from({ length: radius * 6 });\n+}',
+        },
+      ],
+      patchesHydrated: true,
+    },
+    {
+      sha: 'dead002b83c52e4fa095837263049586dead0002',
+      shortSha: 'dead002',
+      subject: 'fix(audio): typo in marimba reverb decay (amended away)',
+      body: 'Orphaned reflog commit (HEAD@{4}: commit (amend)) left behind when commit SHA was rewritten.',
+      authorName: 'Jun Takahashi',
+      authorLogin: 'jun-audio',
+      timestamp: new Date(now - 16 * 3600_000).toISOString(),
+      branch: 'ghost-ruins',
+      parents: ['e0763672d81a7394f5ead827b8594a3bc7685941'],
+      children: [],
+      kind: 'fix',
+      isGhost: true,
+      reflogAction: 'commit --amend',
+      filesCount: 1,
+      stats: { additions: 3, deletions: 3, total: 6 },
+      files: [
+        {
+          filename: 'src/audio/breezeSynth.ts',
+          status: 'modified',
+          additions: 3,
+          deletions: 3,
+          patch: '@@ -18,3 +18,3 @@\n-const decaySec = 99.5; // oops infinite echo\n+const decaySec = 0.95;',
+        },
+      ],
+      patchesHydrated: true,
+    },
+    {
+      sha: 'dead003c72d6fc8e94a3f037c0dae9f8dead0003',
+      shortSha: 'dead003',
+      subject: 'feat(lanterns): pre-rebase draft of firefly bloom pass',
+      body: 'Orphaned reflog commit (HEAD@{2}: rebase (finish)) superseded by rebased SHA on feat/firefly-lanterns.',
+      authorName: 'Kael Vance',
+      authorLogin: 'kael-voxel',
+      timestamp: new Date(now - 7 * 3600_000).toISOString(),
+      branch: 'ghost-ruins',
+      parents: ['f1874783e92b84a506fbe938c96a5b4cd8796a52'],
+      children: [],
+      kind: 'refactor',
+      isGhost: true,
+      reflogAction: 'git rebase',
+      filesCount: 1,
+      stats: { additions: 42, deletions: 18, total: 60 },
+      files: [
+        {
+          filename: 'src/props/lanterns.ts',
+          status: 'modified',
+          additions: 42,
+          deletions: 18,
+          patch: '@@ -10,4 +10,5 @@\n-export const BLOOM_RADIUS = 0.4;\n+export const BLOOM_RADIUS = 1.15;\n+export const WARM_KELVIN = 2400;',
+        },
+      ],
+      patchesHydrated: true,
+    },
+  ];
+
+  return enrichVillageGraphInsights({
     owner: 'gitvillage',
     repo: 'sky-village',
     description: 'Built-in interactive demo repo — click any commit villager or paste any public GitHub repo above!',
@@ -645,13 +730,39 @@ export function createDemoRepoGraph(): RepoVillageGraph {
     allBranches: [...branchOrder],
     stars: 1420,
     isDemo: true,
+    tags: [
+      { name: 'v0.1.0', sha: '8a10f01c92b41d3e9f8472615293847561029384' },
+      { name: 'v0.5.0', sha: 'df652561c7096283e4d9c716a748392ab6574830' },
+      { name: 'v1.0.0', sha: '24ba7ab61c5eb7d8392ef26bfc9d8e7f0bac9d85' },
+    ],
+    stashes: [
+      {
+        index: 0,
+        selector: 'stash@{0}',
+        sha: '57a5b000111222333444555666777888999000aa',
+        timestamp: new Date(now - 3 * 3600_000).toISOString(),
+        branch: 'main',
+        message: 'volumetric cloud-sea godrays & rainbow shader',
+        filesCount: 3,
+      },
+      {
+        index: 1,
+        selector: 'stash@{1}',
+        sha: '57a5b000bbbcccdddeeefff111222333444555bb',
+        timestamp: new Date(now - 29 * 3600_000).toISOString(),
+        branch: 'feat/firefly-lanterns',
+        message: 'prototype: fishing pier & paper boats',
+        filesCount: 2,
+      },
+    ],
+    ghostCommits,
     ciWeather: {
       status: 'passing',
       summary: '14 checks passing',
     },
     branches,
     commitsBySha,
-  };
+  });
 }
 
 export function createConflictDemoRepoGraph(): RepoVillageGraph {

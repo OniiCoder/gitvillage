@@ -101,6 +101,22 @@ export type AnalyticsEventMap = {
     repo_type: 'demo' | 'github' | 'local';
     repo_slug: string;
   };
+  xray_lens_toggled: {
+    lens: string;
+    repo_slug: string;
+  };
+  bisect_started: {
+    commit_count: number;
+    repo_slug: string;
+  };
+  bisect_resolved: {
+    steps_taken: number;
+    repo_slug: string;
+  };
+  rebase_vs_merge_toggled: {
+    mode: 'rebase' | 'merge';
+    branch: string;
+  };
 };
 
 /**

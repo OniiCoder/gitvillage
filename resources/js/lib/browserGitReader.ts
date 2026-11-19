@@ -1,5 +1,6 @@
 import { parseConflictMarkersFromText } from './conflictParser';
 import { classifyCommitKind } from './demoRepo';
+import { enrichVillageGraphInsights } from './gitInsights';
 import type {
   BranchIslandData,
   CommitData,
@@ -7,6 +8,8 @@ import type {
   GateVisitorFile,
   MergeConflictInfo,
   RepoVillageGraph,
+  StashEntryData,
+  TagMonumentData,
 } from '@/types/village';
 
 const BRANCH_PALETTE = ['#34d399', '#60a5fa', '#f472b6', '#fbbf24', '#a78bfa', '#fb923c'];
@@ -850,43 +853,61 @@ async function collectRefs(source: BrowserRepoSource): Promise<{
   currentBranch: string;
   headSha: string | null;
   branchTips: Map<string, string>;
+  rawTags: Map<string, string>;
 }> {
   const branchTips = new Map<string, string>();
+  const rawTags = new Map<string, string>();
 
   // 1. Read `.git/packed-refs` first
   const packedBytes = await source.readFile('.git/packed-refs');
   if (packedBytes) {
     const text = textDecoder.decode(packedBytes);
+    let lastTagName: string | null = null;
     for (const line of text.split('\n')) {
       const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('^')) continue;
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      if (trimmed.startsWith('^') && lastTagName) {
+        const peeledSha = trimmed.slice(1).trim().toLowerCase();
+        if (/^[0-9a-f]{40}$/.test(peeledSha)) {
+          rawTags.set(lastTagName, peeledSha);
+        }
+        continue;
+      }
+      lastTagName = null;
       const [sha, ref] = trimmed.split(/\s+/);
       if (sha && ref?.startsWith('refs/heads/')) {
-        branchTips.set(ref.slice('refs/heads/'.length), sha);
+        branchTips.set(ref.slice('refs/heads/'.length), sha.toLowerCase());
+      } else if (sha && ref?.startsWith('refs/tags/')) {
+        const tName = ref.slice('refs/tags/'.length);
+        rawTags.set(tName, sha.toLowerCase());
+        lastTagName = tName;
       }
     }
   }
 
-  // 2. Recursively scan `.git/refs/heads` (overrides packed-refs)
-  async function walkHeads(relDir: string, prefix: string): Promise<void> {
+  // 2. Recursively scan `.git/refs/heads` and `.git/refs/tags` (overrides packed-refs)
+  async function walkRefs(relDir: string, prefix: string, target: Map<string, string>): Promise<void> {
     const items = await source.listDir(relDir);
     for (const item of items) {
       const nextRel = `${relDir}/${item.name}`;
-      const nextBranch = prefix ? `${prefix}/${item.name}` : item.name;
+      const nextName = prefix ? `${prefix}/${item.name}` : item.name;
       if (item.kind === 'directory') {
-        await walkHeads(nextRel, nextBranch);
+        await walkRefs(nextRel, nextName, target);
       } else {
         const bytes = await source.readFile(nextRel);
         if (bytes) {
           const sha = textDecoder.decode(bytes).trim();
           if (/^[0-9a-f]{40}$/i.test(sha)) {
-            branchTips.set(nextBranch, sha.toLowerCase());
+            target.set(nextName, sha.toLowerCase());
           }
         }
       }
     }
   }
-  await walkHeads('.git/refs/heads', '');
+  await Promise.all([
+    walkRefs('.git/refs/heads', '', branchTips),
+    walkRefs('.git/refs/tags', '', rawTags),
+  ]);
 
   // 3. Read `.git/HEAD`
   let currentBranch = 'main';
@@ -917,7 +938,7 @@ async function collectRefs(source: BrowserRepoSource): Promise<{
     }
   }
 
-  return { currentBranch, headSha, branchTips };
+  return { currentBranch, headSha, branchTips, rawTags };
 }
 
 async function scanWorkingTreeFiles(
@@ -1143,11 +1164,12 @@ export async function loadBrowserGitRepoVillage(
   }
 
   const store = new BrowserGitObjectStore(source);
-  const [{ currentBranch, headSha, branchTips }, mergeHeadBytes, mergeMsgBytes] = await Promise.all([
-    collectRefs(source),
-    source.readFile('.git/MERGE_HEAD'),
-    source.readFile('.git/MERGE_MSG'),
-  ]);
+  const [{ currentBranch, headSha, branchTips, rawTags }, mergeHeadBytes, mergeMsgBytes] =
+    await Promise.all([
+      collectRefs(source),
+      source.readFile('.git/MERGE_HEAD'),
+      source.readFile('.git/MERGE_MSG'),
+    ]);
 
   let mergeHeadSha: string | undefined;
   let theirsBranch: string | undefined;
@@ -1571,7 +1593,121 @@ export async function loadBrowserGitRepoVillage(
         }
       : undefined;
 
-  return {
+  // Extract Release Tags, Stashes (.git/logs/refs/stash), and Reflog Ghosts (.git/logs/HEAD)
+  const matchedTags: TagMonumentData[] = [];
+  for (const [tagName, rawSha] of rawTags.entries()) {
+    let targetSha = rawSha;
+    if (!commitsBySha.has(targetSha)) {
+      const obj = await store.readObject(targetSha);
+      if (obj?.type === 'tag') {
+        const tagText = textDecoder.decode(obj.body);
+        const objMatch = /^object ([0-9a-f]{40})/m.exec(tagText);
+        if (objMatch?.[1]) targetSha = objMatch[1].toLowerCase();
+      }
+    }
+    if (commitsBySha.has(targetSha)) {
+      matchedTags.push({ name: tagName, sha: targetSha });
+      if (matchedTags.length >= 8) break;
+    }
+  }
+
+  const [stashLogBytes, headLogBytes] = await Promise.all([
+    source.readFile('.git/logs/refs/stash'),
+    source.readFile('.git/logs/HEAD'),
+  ]);
+
+  const stashes: StashEntryData[] = [];
+  const stashShas = new Set<string>();
+  if (stashLogBytes) {
+    const lines = textDecoder
+      .decode(stashLogBytes)
+      .split(/\r?\n/)
+      .filter((l) => l.trim().length > 0)
+      .toReversed()
+      .slice(0, 6);
+    lines.forEach((line, idx) => {
+      const tabIdx = line.indexOf('\t');
+      const left = tabIdx >= 0 ? line.slice(0, tabIdx) : line;
+      const rawMsg = tabIdx >= 0 ? line.slice(tabIdx + 1).trim() : 'WIP stash';
+      const m = /^[0-9a-f]{40}\s+([0-9a-f]{40})\s+.*?\s+(\d+)\s+[+-]\d{4}$/.exec(left.trim());
+      if (!m) return;
+      const sha = m[1].toLowerCase();
+      const epochSec = Number.parseInt(m[2], 10);
+      stashShas.add(sha);
+      let branch: string | undefined;
+      let cleanMsg = rawMsg;
+      const bm = /^(?:WIP on|On) ([^:]+):\s*(.*)$/.exec(rawMsg);
+      if (bm) {
+        branch = bm[1].trim();
+        cleanMsg = bm[2].trim() || rawMsg;
+      }
+      stashes.push({
+        index: idx,
+        selector: `stash@{${idx}}`,
+        sha,
+        timestamp: Number.isFinite(epochSec)
+          ? new Date(epochSec * 1000).toISOString()
+          : new Date().toISOString(),
+        message: cleanMsg,
+        branch,
+      });
+    });
+  }
+
+  const ghostCommits: CommitData[] = [];
+  if (headLogBytes) {
+    const seenGhosts = new Set<string>();
+    const logLines = textDecoder
+      .decode(headLogBytes)
+      .split(/\r?\n/)
+      .filter((l) => l.trim().length > 0)
+      .toReversed()
+      .slice(0, 35);
+
+    for (const line of logLines) {
+      if (ghostCommits.length >= 6) break;
+      const tabIdx = line.indexOf('\t');
+      const left = tabIdx >= 0 ? line.slice(0, tabIdx) : line;
+      const note = tabIdx >= 0 ? line.slice(tabIdx + 1).trim() : 'reflog';
+      const parts = left.trim().split(/\s+/);
+      for (const candSha of [parts[0], parts[1]]) {
+        if (!candSha || !/^[0-9a-f]{40}$/i.test(candSha) || /^0+$/.test(candSha)) continue;
+        const sha = candSha.toLowerCase();
+        if (commitsBySha.has(sha) || stashShas.has(sha) || seenGhosts.has(sha)) continue;
+        seenGhosts.add(sha);
+        const obj = await store.readObject(sha);
+        if (!obj || obj.type !== 'commit') continue;
+        const parsed = parseCommitObject(sha, obj.body);
+        const login =
+          parsed.authorEmail.split('@')[0] || parsed.authorName.toLowerCase().replace(/\s+/g, '-');
+        const action = note.includes('amend')
+          ? 'commit --amend'
+          : note.includes('reset')
+            ? 'git reset'
+            : note.includes('rebase')
+              ? 'git rebase'
+              : 'reflog orphan';
+        ghostCommits.push({
+          sha: parsed.sha,
+          shortSha: parsed.sha.slice(0, 7),
+          subject: parsed.subject,
+          body: `Orphaned reflog commit (${note}) still preserved inside .git/objects.`,
+          authorName: parsed.authorName,
+          authorLogin: login,
+          timestamp: parsed.timestampIso,
+          branch: 'ghost-ruins',
+          parents: parsed.parents,
+          children: [],
+          kind: classifyCommitKind(parsed.subject, parsed.parents.length),
+          isGhost: true,
+          reflogAction: action,
+        });
+        if (ghostCommits.length >= 6) break;
+      }
+    }
+  }
+
+  return enrichVillageGraphInsights({
     owner: 'local',
     repo: source.rootName,
     description: `Local repository (${source.rootName}) — read privately in your browser`,
@@ -1585,6 +1721,9 @@ export async function loadBrowserGitRepoVillage(
     localPath: source.rootName,
     gateVisitors: sortedVisitors,
     mergeConflict,
+    tags: matchedTags,
+    stashes,
+    ghostCommits,
     ciWeather: mergeConflict?.active
       ? {
           status: 'failing',
@@ -1593,5 +1732,5 @@ export async function loadBrowserGitRepoVillage(
       : undefined,
     branches,
     commitsBySha,
-  };
+  });
 }

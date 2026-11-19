@@ -1,10 +1,12 @@
 import { classifyCommitKind } from './demoRepo';
+import { enrichVillageGraphInsights } from './gitInsights';
 import type {
   BranchIslandData,
   CiWeatherInfo,
   CommitData,
   CommitFileChange,
   RepoVillageGraph,
+  TagMonumentData,
 } from '@/types/village';
 
 const BRANCH_PALETTE = ['#34d399', '#60a5fa', '#f472b6', '#fbbf24', '#a78bfa', '#fb923c'];
@@ -78,6 +80,11 @@ interface GhRepoResponse {
 }
 
 interface GhBranchItem {
+  name: string;
+  commit: { sha: string };
+}
+
+interface GhTagItem {
   name: string;
   commit: { sha: string };
 }
@@ -163,7 +170,7 @@ export async function loadGitHubRepoVillage(
   const defaultBranch = repoMeta.default_branch || 'main';
   const activeBranch = targetBranch?.trim() || defaultBranch;
 
-  const [defaultCommitsRaw, branchListRaw] = await Promise.all([
+  const [defaultCommitsRaw, branchListRaw, tagsRaw] = await Promise.all([
     ghFetch<GhCommitItem[]>(
       `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits?sha=${encodeURIComponent(activeBranch)}&per_page=24`,
       token,
@@ -174,6 +181,11 @@ export async function loadGitHubRepoVillage(
       token,
       userSignal,
     ).catch(() => [] as GhBranchItem[]),
+    ghFetch<GhTagItem[]>(
+      `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/tags?per_page=35`,
+      token,
+      userSignal,
+    ).catch(() => [] as GhTagItem[]),
   ]);
 
   const commitsBySha = new Map<string, CommitData>();
@@ -319,7 +331,12 @@ export async function loadGitHubRepoVillage(
     ]),
   );
 
-  return {
+  const matchedTags: TagMonumentData[] = tagsRaw
+    .filter((t) => commitsBySha.has(t.commit.sha))
+    .slice(0, 6)
+    .map((t) => ({ name: t.name, sha: t.commit.sha }));
+
+  return enrichVillageGraphInsights({
     owner: repoMeta.owner.login,
     repo: repoMeta.name,
     description: repoMeta.description || `Floating 3D commit village for ${repoMeta.owner.login}/${repoMeta.name}`,
@@ -328,9 +345,10 @@ export async function loadGitHubRepoVillage(
     allBranches,
     stars: repoMeta.stargazers_count ?? 0,
     isDemo: false,
+    tags: matchedTags,
     branches,
     commitsBySha,
-  };
+  });
 }
 
 const detailCache = new Map<

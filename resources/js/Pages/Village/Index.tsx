@@ -1,5 +1,6 @@
 import { Head } from '@inertiajs/react';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { BisectBar } from '@/Components/BisectBar';
 import { BottomFilterDock } from '@/Components/BottomFilterDock';
 import { CensusPopover } from '@/Components/CensusPopover';
 import { DiffViewerDialog, type DiffModalPayload } from '@/Components/DiffViewerDialog';
@@ -11,6 +12,7 @@ import { SfIcon, SfIconSprite } from '@/Components/SfIconSprite';
 import { ShareStudioDialog } from '@/Components/ShareStudioDialog';
 import { SpatialTopbar } from '@/Components/SpatialTopbar';
 import { TimeLapseBar } from '@/Components/TimeLapseBar';
+import { XRayPopover } from '@/Components/XRayPopover';
 import { describeRepoForAnalytics, trackEvent } from '@/lib/analytics';
 import { capturePostcardPng, recordVillageVideoClip } from '@/lib/captureStudio';
 import { createDemoRepoGraph } from '@/lib/demoRepo';
@@ -31,6 +33,23 @@ function createInitialSnapshot(): VillageEngineSnapshot {
     gateVisitorsCount: 0,
     activeFilter: 'all',
     activeAuthorKey: null,
+    xRayLens: 'none',
+    bisect: {
+      active: false,
+      orderedShas: [],
+      lowIdx: 0,
+      highIdx: 0,
+      midIdx: 0,
+      step: 0,
+      maxSteps: 0,
+      resolvedCulpritSha: null,
+    },
+    rebaseAnim: {
+      active: false,
+      mode: 'merge',
+      branchName: '',
+      progress: 0,
+    },
     timeOfDay: 'day',
     cameraMode: 'orbit',
     muted: false,
@@ -316,7 +335,7 @@ export default function VillageIndex({
 
   const diffModalPayload: DiffModalPayload | null = (() => {
     const sel = snapshot.selection;
-    if (!sel) return null;
+    if (!sel || sel.kind === 'stash' || sel.kind === 'landmark') return null;
     if (sel.kind === 'commit') {
       const c = sel.commit;
       return {
@@ -448,6 +467,27 @@ export default function VillageIndex({
         onSelectVisitor={(idx) => engineRef.current?.focusVisitorByIndex(idx)}
       />
 
+      <XRayPopover
+        graph={snapshot.graph}
+        xRayLens={snapshot.xRayLens}
+        bisectActive={snapshot.bisect.active}
+        rebaseAnim={snapshot.rebaseAnim}
+        onToggleLens={(lens) => engineRef.current?.setXRayLens(lens)}
+        onStartBisect={() => engineRef.current?.startBisect()}
+        onStopBisect={() => engineRef.current?.stopBisect()}
+        onTriggerRebaseMode={(mode) => engineRef.current?.triggerRebaseVsMergeDemo(mode)}
+        onSelectStash={(idx) => engineRef.current?.focusStashByIndex(idx)}
+        onSelectCommit={(sha) => engineRef.current?.focusVillagerBySha(sha)}
+      />
+
+      <BisectBar
+        bisect={snapshot.bisect}
+        graph={snapshot.graph}
+        onMarkGood={() => engineRef.current?.stepBisectVerdict('good')}
+        onMarkBad={() => engineRef.current?.stepBisectVerdict('bad')}
+        onStop={() => engineRef.current?.stopBisect()}
+      />
+
       <TimeLapseBar
         timeLapse={snapshot.timeLapse}
         onTogglePause={() => engineRef.current?.togglePauseTimeLapse()}
@@ -507,6 +547,7 @@ export default function VillageIndex({
         onLetVisitorsIn={() => engineRef.current?.triggerGatePreviewOpen()}
         onSyncLocal={() => void engineRef.current?.pollLocalRepoNow(true)}
         onOpenDiffModal={openDiffModal}
+        onJumpCherryPickTwin={() => engineRef.current?.jumpToCherryPickTwin()}
       />
 
       <DiffViewerDialog

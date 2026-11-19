@@ -300,6 +300,20 @@ export function SpatialTopbar({
             <SfIcon name="sf-people" size={15} />
             <span>Census</span>
           </button>
+          <button
+            type="button"
+            id="xray-btn"
+            className="tb-btn"
+            aria-label="X-Ray — explore hidden Git history, bisect, rebase, ghosts and stashes"
+            title="Git History X-Ray (Bisect, Rebase vs Merge, Ghosts, Hotspots & Bus Factor)"
+            {...({
+              commandfor: 'xray-popover',
+              command: 'toggle-popover',
+            } as Record<string, string>)}
+          >
+            <SfIcon name="sf-sparkles" size={15} />
+            <span>X-Ray</span>
+          </button>
         </div>
 
         <span className="toolbar-sep" role="separator" aria-orientation="vertical" />

@@ -201,4 +201,52 @@ class VillagePageTest extends TestCase
             File::deleteDirectory($tmpDir);
         }
     }
+
+    public function test_local_git_inspect_extracts_tags_stashes_and_reflog_ghost_commits(): void
+    {
+        $this->app['env'] = 'local';
+
+        $tmpDir = sys_get_temp_dir().DIRECTORY_SEPARATOR.'gitvillage-xray-'.uniqid();
+        mkdir($tmpDir, 0777, true);
+
+        $run = static function (array $cmd) use ($tmpDir): void {
+            $proc = new Process($cmd, $tmpDir);
+            $proc->run();
+        };
+
+        try {
+            $run(['git', 'init', '-b', 'main']);
+            $run(['git', 'config', 'user.email', 'dev@gitvillage.test']);
+            $run(['git', 'config', 'user.name', 'Village Historian']);
+
+            file_put_contents($tmpDir.'/Village.php', "<?php\nreturn ['era' => 1];\n");
+            $run(['git', 'add', 'Village.php']);
+            $run(['git', 'commit', '-m', "feat: found the village\n\nCo-authored-by: Maya Lin <maya@gitvillage.test>"]);
+            $run(['git', 'tag', 'v1.0.0']);
+
+            // Create a commit and orphan it via `git reset --hard HEAD~1` so it lives only in reflog
+            file_put_contents($tmpDir.'/GhostExperiment.php', "<?php\n// orphaned experiment\n");
+            $run(['git', 'add', 'GhostExperiment.php']);
+            $run(['git', 'commit', '-m', 'wip: experimental portal calibration']);
+            $run(['git', 'reset', '--hard', 'HEAD~1']);
+
+            // Create a git stash entry
+            file_put_contents($tmpDir.'/Village.php', "<?php\nreturn ['era' => 2, 'wip' => true];\n");
+            $run(['git', 'stash', 'push', '-m', 'wip: stashed lantern blueprint']);
+
+            $res = $this->getJson('/api/local-repo?path='.urlencode($tmpDir))->assertOk();
+
+            $res->assertJsonPath('tags.0.name', 'v1.0.0')
+                ->assertJsonPath('stashes.0.selector', 'stash@{0}')
+                ->assertJsonPath('ghostCommits.0.subject', 'wip: experimental portal calibration');
+
+            $stashMessage = (string) $res->json('stashes.0.message');
+            $this->assertStringContainsString('stashed lantern blueprint', $stashMessage);
+
+            $commitBody = (string) $res->json('branches.0.commits.0.body');
+            $this->assertStringContainsString('Co-authored-by: Maya Lin', $commitBody);
+        } finally {
+            File::deleteDirectory($tmpDir);
+        }
+    }
 }

@@ -1,19 +1,42 @@
 import * as THREE from 'three';
 import type {
   BranchIslandData,
+  BranchSeason,
   BridgeLayout,
   BrokenBridgePlank,
   GateLayout,
+  HotspotLandmarkData,
   IslandLayout,
   RepoVillageGraph,
+  StashEntryData,
 } from '@/types/village';
-import { hashString } from './villagerMesh';
+import { getAuthorColorHex, hashString } from './villagerMesh';
+
+export interface BuiltStashChest {
+  stash: StashEntryData;
+  group: THREE.Group;
+  lidPivot: THREE.Object3D;
+  hitBox: THREE.Mesh;
+  glowMesh: THREE.Object3D;
+  worldPos: THREE.Vector3;
+}
+
+export interface BuiltLandmark {
+  data: HotspotLandmarkData;
+  group: THREE.Group;
+  hitBox: THREE.Mesh;
+  worldPos: THREE.Vector3;
+}
 
 export interface BuiltWorld {
   worldGroup: THREE.Group;
   islands: IslandLayout[];
+  ghostIsland?: IslandLayout;
   bridges: BridgeLayout[];
   gate?: GateLayout;
+  stashChests: BuiltStashChest[];
+  landmarks: BuiltLandmark[];
+  cherryPickArcs: Array<{ fromSha: string; toSha: string; mesh: THREE.Mesh }>;
   animatedProps: {
     windmillBlades: THREE.Object3D[];
     floatingCrystals: Array<{ mesh: THREE.Object3D; baseY: number; phase: number }>;
@@ -21,10 +44,13 @@ export interface BuiltWorld {
     lanternGlows: THREE.MeshStandardMaterial[];
     windowGlows: THREE.MeshStandardMaterial[];
     conflictRifts: THREE.Object3D[];
+    portalRings: THREE.Object3D[];
     conflictGateBarrier?: THREE.Object3D;
     gateRoofMat?: THREE.MeshStandardMaterial;
     headBeacon?: THREE.Object3D;
     fireflies?: THREE.Points;
+    forgeEmbers?: THREE.Points;
+    ghostGroup?: THREE.Group;
     stormGroup?: THREE.Group;
     rainLines?: THREE.LineSegments;
     lightningBolt?: THREE.Mesh;
@@ -76,6 +102,8 @@ function createIslandMesh(
   seed: number,
   accentColor: string,
   floatingCrystals: BuiltWorld['animatedProps']['floatingCrystals'],
+  season: BranchSeason = 'lush',
+  isGhostRuin = false,
 ): THREE.Group {
   const group = new THREE.Group();
 
@@ -109,11 +137,23 @@ function createIslandMesh(
   }
   topGeo.computeVertexNormals();
 
-  const grassColor = new THREE.Color('#4ade80').lerp(new THREE.Color(accentColor), 0.16);
+  const baseDeckHex = isGhostRuin
+    ? '#312e81'
+    : season === 'winter'
+      ? '#e2e8f0'
+      : season === 'autumn'
+        ? '#d97706'
+        : '#4ade80';
+  const grassColor = new THREE.Color(baseDeckHex).lerp(
+    new THREE.Color(accentColor),
+    isGhostRuin ? 0.25 : 0.16,
+  );
   const grassMat = new THREE.MeshStandardMaterial({
     color: grassColor,
-    roughness: 0.85,
+    roughness: isGhostRuin ? 0.72 : 0.85,
     flatShading: true,
+    transparent: isGhostRuin,
+    opacity: isGhostRuin ? 0.88 : 1,
   });
   const grassMesh = new THREE.Mesh(topGeo, grassMat);
   grassMesh.receiveShadow = true;
@@ -170,7 +210,14 @@ function createIslandMesh(
   return group;
 }
 
-function addTree(parent: THREE.Group, x: number, z: number, seed: number, tintHex: string): void {
+function addTree(
+  parent: THREE.Group,
+  x: number,
+  z: number,
+  seed: number,
+  tintHex: string,
+  season: BranchSeason = 'lush',
+): void {
   const tree = new THREE.Group();
   tree.position.set(x, 0, z);
 
@@ -182,10 +229,18 @@ function addTree(parent: THREE.Group, x: number, z: number, seed: number, tintHe
   trunk.castShadow = true;
   tree.add(trunk);
 
-  const isBlossom = seed % 4 === 0;
-  const baseLeaf = isBlossom
-    ? new THREE.Color('#f9a8d4').lerp(new THREE.Color(tintHex), 0.25)
-    : new THREE.Color('#22c55e').lerp(new THREE.Color('#15803d'), (seed % 5) / 8);
+  const isBlossom = season === 'lush' && seed % 4 === 0;
+  const baseLeaf =
+    season === 'winter'
+      ? new THREE.Color('#f1f5f9').lerp(new THREE.Color('#93c5fd'), (seed % 4) / 10)
+      : season === 'autumn'
+        ? new THREE.Color(seed % 2 === 0 ? '#ef4444' : '#f59e0b').lerp(
+            new THREE.Color('#ea580c'),
+            (seed % 4) / 6,
+          )
+        : isBlossom
+          ? new THREE.Color('#f9a8d4').lerp(new THREE.Color(tintHex), 0.25)
+          : new THREE.Color('#22c55e').lerp(new THREE.Color('#15803d'), (seed % 5) / 8);
 
   const leafMat = new THREE.MeshStandardMaterial({
     color: baseLeaf,
@@ -742,6 +797,9 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
   const worldGroup = new THREE.Group();
   const islands: IslandLayout[] = [];
   const bridges: BridgeLayout[] = [];
+  const stashChests: BuiltStashChest[] = [];
+  const landmarks: BuiltLandmark[] = [];
+  const cherryPickArcs: BuiltWorld['cherryPickArcs'] = [];
   const animatedProps: BuiltWorld['animatedProps'] = {
     windmillBlades: [],
     floatingCrystals: [],
@@ -749,6 +807,7 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
     lanternGlows: [],
     windowGlows: [],
     conflictRifts: [],
+    portalRings: [],
   };
 
   const mainBranch = graph.branches.find((b) => b.isDefault) ?? graph.branches[0];
@@ -1091,6 +1150,250 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
     );
   }
 
+  // 1b. Golden Release Tag Archways (`v1.0.0`, etc.) right over the cobblestone path!
+  const mainTags = (graph.tags ?? []).filter((t) => mainWaypoints.has(t.sha)).slice(0, 5);
+  const goldArchMat = new THREE.MeshStandardMaterial({
+    color: 0xfacc15,
+    emissive: 0xb45309,
+    emissiveIntensity: 0.35,
+    metalness: 0.55,
+    roughness: 0.28,
+  });
+  for (const tag of mainTags) {
+    const wp = mainWaypoints.get(tag.sha);
+    if (!wp) continue;
+    const archGrp = new THREE.Group();
+    archGrp.position.set(wp.x, 0, wp.z);
+    for (const sgn of [-1, 1]) {
+      const col = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 2.35, 8), goldArchMat);
+      col.position.set(0, 1.18, sgn * 1.32);
+      col.castShadow = true;
+      archGrp.add(col);
+    }
+    const crossBeam = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.18, 3.15), goldArchMat);
+    crossBeam.position.set(0, 2.38, 0);
+    const upperBeam = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.14, 3.45), goldArchMat);
+    upperBeam.position.set(0, 2.62, 0);
+    archGrp.add(crossBeam, upperBeam);
+
+    const tagTex = makeSignTexture(`🏷️ ${tag.name}`, '#facc15', 'Release tag milestone');
+    const tagBoard = new THREE.Mesh(
+      new THREE.BoxGeometry(1.85, 0.68, 0.09),
+      new THREE.MeshBasicMaterial({ map: tagTex }),
+    );
+    tagBoard.position.set(0, 2.98, 0);
+    const tagBoardBack = tagBoard.clone();
+    tagBoardBack.rotation.y = Math.PI;
+    archGrp.add(tagBoard, tagBoardBack);
+    mainMesh.add(archGrp);
+  }
+
+  // 1c. Code Hotspot Volcanic Forge & Ancient Mossy Monument Landmarks!
+  const landmarkHitMat = new THREE.MeshBasicMaterial({ visible: false });
+  const hotspotData = graph.hotspots?.find((h) => h.kind === 'hotspot');
+  if (hotspotData) {
+    const forgeSpot = pickClearMainSpot(0.2, 1, 2.9);
+    if (forgeSpot) {
+      const forgeGroup = new THREE.Group();
+      forgeGroup.position.set(forgeSpot.x, 0, forgeSpot.zSide * 2.85);
+      const basaltMat = new THREE.MeshStandardMaterial({
+        color: 0x1e293b,
+        roughness: 0.9,
+        flatShading: true,
+      });
+      const magmaMat = new THREE.MeshStandardMaterial({
+        color: 0xf97316,
+        emissive: 0xef4444,
+        emissiveIntensity: 1.35,
+        roughness: 0.3,
+      });
+      const hearth = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 1.05, 0.72, 7), basaltMat);
+      hearth.position.y = 0.36;
+      hearth.castShadow = true;
+      const magmaPool = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.62, 0.12, 7), magmaMat);
+      magmaPool.position.y = 0.72;
+      const chimney = new THREE.Mesh(new THREE.BoxGeometry(0.48, 1.45, 0.48), basaltMat);
+      chimney.position.set(-0.35, 1.15, -0.25);
+      const anvil = new THREE.Mesh(
+        new THREE.BoxGeometry(0.56, 0.36, 0.28),
+        new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.75, roughness: 0.3 }),
+      );
+      anvil.position.set(0.55, 0.22, 0.38);
+      forgeGroup.add(hearth, magmaPool, chimney, anvil);
+
+      const shortHot = hotspotData.filename.split('/').pop() || hotspotData.filename;
+      const forgeTex = makeSignTexture(
+        `🔥 ${shortHot}`,
+        '#ff453a',
+        `Hotspot · ${hotspotData.touches}x churn · ${hotspotData.fixCount} fixes`,
+      );
+      const forgePlaque = new THREE.Mesh(
+        new THREE.BoxGeometry(2.15, 0.76, 0.09),
+        new THREE.MeshBasicMaterial({ map: forgeTex }),
+      );
+      forgePlaque.position.set(0, 2.35, 0);
+      const forgePlaqueBack = forgePlaque.clone();
+      forgePlaqueBack.rotation.y = Math.PI;
+      forgeGroup.add(forgePlaque, forgePlaqueBack);
+
+      const hitBox = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.15, 2.6, 8), landmarkHitMat);
+      hitBox.position.y = 1.3;
+      hitBox.userData.landmarkIndex = landmarks.length;
+      forgeGroup.add(hitBox);
+      mainMesh.add(forgeGroup);
+
+      // Rising Volcanic Forge Embers
+      const emberCount = 28;
+      const emberPos = new Float32Array(emberCount * 3);
+      for (let e = 0; e < emberCount; e++) {
+        emberPos[e * 3] = forgeGroup.position.x + (Math.random() - 0.5) * 0.9;
+        emberPos[e * 3 + 1] = 0.8 + Math.random() * 2.4;
+        emberPos[e * 3 + 2] = forgeGroup.position.z + (Math.random() - 0.5) * 0.9;
+      }
+      const emberGeo = new THREE.BufferGeometry();
+      emberGeo.setAttribute('position', new THREE.BufferAttribute(emberPos, 3));
+      const forgeEmbers = new THREE.Points(
+        emberGeo,
+        new THREE.PointsMaterial({
+          color: 0xfb923c,
+          size: 0.16,
+          transparent: true,
+          opacity: 0.88,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      );
+      mainMesh.add(forgeEmbers);
+      animatedProps.forgeEmbers = forgeEmbers;
+
+      landmarks.push({
+        data: hotspotData,
+        group: forgeGroup,
+        hitBox,
+        worldPos: forgeGroup.position.clone(),
+      });
+    }
+  }
+
+  const monumentData = graph.hotspots?.find((h) => h.kind === 'monument');
+  if (monumentData) {
+    const monSpot = pickClearMainSpot(-mainLength * 0.06, -1, 2.8);
+    if (monSpot) {
+      const monGroup = new THREE.Group();
+      monGroup.position.set(monSpot.x, 0, monSpot.zSide * 2.85);
+      const mossStoneMat = new THREE.MeshStandardMaterial({
+        color: 0x94a3b8,
+        roughness: 0.92,
+        flatShading: true,
+      });
+      const mossMat = new THREE.MeshStandardMaterial({
+        color: 0x16a34a,
+        roughness: 0.85,
+        flatShading: true,
+      });
+      const plinth = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.34, 1.15), mossStoneMat);
+      plinth.position.y = 0.17;
+      const obelisk = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.44, 1.95, 4), mossStoneMat);
+      obelisk.position.y = 1.25;
+      obelisk.rotation.y = Math.PI / 4;
+      obelisk.castShadow = true;
+      const mossCap = new THREE.Mesh(new THREE.DodecahedronGeometry(0.32, 0), mossMat);
+      mossCap.position.set(0.22, 0.58, 0.22);
+      const mossWrap = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.075, 5, 8), mossMat);
+      mossWrap.rotation.x = Math.PI / 2.3;
+      mossWrap.position.y = 1.05;
+      monGroup.add(plinth, obelisk, mossCap, mossWrap);
+
+      const shortMon = monumentData.filename.split('/').pop() || monumentData.filename;
+      const monTex = makeSignTexture(
+        `🗿 ${shortMon}`,
+        '#34d399',
+        `Ancient stable code · ${monumentData.touches}x touched`,
+      );
+      const monPlaque = new THREE.Mesh(
+        new THREE.BoxGeometry(2.1, 0.74, 0.09),
+        new THREE.MeshBasicMaterial({ map: monTex }),
+      );
+      monPlaque.position.set(0, 2.65, 0);
+      const monPlaqueBack = monPlaque.clone();
+      monPlaqueBack.rotation.y = Math.PI;
+      monGroup.add(monPlaque, monPlaqueBack);
+
+      const hitBox = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.0, 2.8, 8), landmarkHitMat);
+      hitBox.position.y = 1.4;
+      hitBox.userData.landmarkIndex = landmarks.length;
+      monGroup.add(hitBox);
+      mainMesh.add(monGroup);
+
+      landmarks.push({
+        data: monumentData,
+        group: monGroup,
+        hitBox,
+        worldPos: monGroup.position.clone(),
+      });
+    }
+  }
+
+  // 1d. Wood-and-Brass `git stash` Treasure Chests near HEAD Plaza!
+  const stashes = (graph.stashes ?? []).slice(0, 4);
+  if (stashes.length > 0) {
+    const chestWoodMat = new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.78 });
+    const chestBrassMat = new THREE.MeshStandardMaterial({
+      color: 0xfbbf24,
+      emissive: 0xd97706,
+      emissiveIntensity: 0.35,
+      metalness: 0.65,
+      roughness: 0.28,
+    });
+    stashes.forEach((stash, sIdx) => {
+      const chestGrp = new THREE.Group();
+      const cx = headPos.x - 0.5 - sIdx * 1.35;
+      const cz = -2.45;
+      chestGrp.position.set(cx, 0, cz);
+      chestGrp.rotation.y = 0.22;
+
+      const baseBox = new THREE.Mesh(new THREE.BoxGeometry(0.76, 0.42, 0.54), chestWoodMat);
+      baseBox.position.y = 0.21;
+      baseBox.castShadow = true;
+      const clasp = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.18, 0.58), chestBrassMat);
+      clasp.position.y = 0.36;
+      chestGrp.add(baseBox, clasp);
+
+      // Hinged curved lid at back edge (-Z) so clicking pops the chest open!
+      const lidPivot = new THREE.Group();
+      lidPivot.position.set(0, 0.42, -0.27);
+      const lidBox = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.2, 0.56), chestWoodMat);
+      lidBox.position.set(0, 0.1, 0.27);
+      const lidBand = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.22, 0.1), chestBrassMat);
+      lidBand.position.set(0, 0.1, 0.27);
+      lidPivot.add(lidBox, lidBand);
+      chestGrp.add(lidPivot);
+
+      const glowGem = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.16, 0),
+        new THREE.MeshBasicMaterial({ color: 0xfef08a }),
+      );
+      glowGem.position.set(0, 0.42, 0);
+      glowGem.visible = false;
+      chestGrp.add(glowGem);
+
+      const hitBox = new THREE.Mesh(new THREE.BoxGeometry(1.05, 1.1, 0.95), landmarkHitMat);
+      hitBox.position.y = 0.52;
+      hitBox.userData.stashIndex = sIdx;
+      chestGrp.add(hitBox);
+
+      mainMesh.add(chestGrp);
+      stashChests.push({
+        stash,
+        group: chestGrp,
+        lidPivot,
+        hitBox,
+        glowMesh: glowGem,
+        worldPos: new THREE.Vector3(cx, 0, cz),
+      });
+    });
+  }
+
   const treeSlots = Math.max(6, Math.floor(mainLength / 3.4));
   for (let i = 0; i < treeSlots; i++) {
     const tx = -mainLength * 0.4 + (i / Math.max(1, treeSlots - 1)) * (mainLength * 0.76);
@@ -1121,12 +1424,14 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
     const { branch, bIdx, zSide, bLength, bWidth } = plan;
     const bCenter = new THREE.Vector3(plan.centerX, plan.centerY, plan.centerZ);
 
+    const branchSeason: BranchSeason = branch.season ?? 'lush';
     const bMesh = createIslandMesh(
       bLength,
       bWidth,
       hashString(branch.name),
       branch.color,
       animatedProps.floatingCrystals,
+      branchSeason,
     );
     bMesh.position.copy(bCenter);
     worldGroup.add(bMesh);
@@ -1154,12 +1459,26 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
     // Place Branch Signpost, Cottage & Trees strictly on the OUTER scenic half (`+zSide`),
     // keeping the entire bridge-facing inner half (`-zSide`) 100% unobstructed!
     const bSign = new THREE.Group();
+    const seasonSuffix =
+      branchSeason === 'winter'
+        ? ` · ❄️ ${branch.ageDays ?? 180}d dormant`
+        : branchSeason === 'autumn'
+          ? ` · 🍂 ${branch.ageDays ?? 60}d autumn`
+          : branch.mergeIntoSha
+            ? ' · merged'
+            : ' · active';
     const bTex = makeSignTexture(
       branch.name,
-      plan.isConflictedMerge ? '#ff453a' : branch.color,
+      plan.isConflictedMerge
+        ? '#ff453a'
+        : branchSeason === 'autumn'
+          ? '#f59e0b'
+          : branchSeason === 'winter'
+            ? '#93c5fd'
+            : branch.color,
       plan.isConflictedMerge
         ? `${branch.commits.length} commit${branch.commits.length === 1 ? '' : 's'} · ⚡ merge conflict`
-        : `${branch.commits.length} commit${branch.commits.length === 1 ? '' : 's'}${branch.mergeIntoSha ? ' · merged' : ' · active'}`,
+        : `${branch.commits.length} commit${branch.commits.length === 1 ? '' : 's'}${seasonSuffix}`,
     );
     const bBoard = new THREE.Mesh(
       new THREE.BoxGeometry(2.35, 0.88, 0.1),
@@ -1187,9 +1506,42 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
       branch.color,
       animatedProps.windowGlows,
     );
-    addTree(bMesh, -bLength * 0.41, zSide * 1.9, bIdx * 31 + 7, branch.color);
-    addTree(bMesh, bLength * 0.37, zSide * 1.85, bIdx * 19 + 4, branch.color);
+    addTree(bMesh, -bLength * 0.41, zSide * 1.9, bIdx * 31 + 7, branch.color, branchSeason);
+    addTree(bMesh, bLength * 0.37, zSide * 1.85, bIdx * 19 + 4, branch.color, branchSeason);
     addLanternPost(bMesh, -0.3, zSide * 1.25, animatedProps.lanternGlows);
+
+    // Bus Factor = 1 Solo-Caretaker Watchtower & Pennant on single-author silos!
+    if (branch.soloOwnerName) {
+      const towerGrp = new THREE.Group();
+      towerGrp.position.set(bLength * 0.33, 0, zSide * 2.15);
+      const towerMat = new THREE.MeshStandardMaterial({
+        color: 0x64748b,
+        roughness: 0.88,
+        flatShading: true,
+      });
+      const turret = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.46, 1.9, 6), towerMat);
+      turret.position.y = 0.95;
+      turret.castShadow = true;
+      const battlement = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.38, 0.28, 6), towerMat);
+      battlement.position.y = 1.98;
+      const mast = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.025, 0.025, 0.95, 5),
+        new THREE.MeshStandardMaterial({ color: 0xe2e8f0 }),
+      );
+      mast.position.y = 2.48;
+      const ownerColor = getAuthorColorHex(branch.soloOwnerKey || branch.soloOwnerName);
+      const pennant = new THREE.Mesh(
+        new THREE.BoxGeometry(0.52, 0.26, 0.03),
+        new THREE.MeshStandardMaterial({
+          color: ownerColor,
+          emissive: ownerColor,
+          emissiveIntensity: 0.4,
+        }),
+      );
+      pennant.position.set(0.26, 2.76, 0);
+      towerGrp.add(turret, battlement, mast, pennant);
+      bMesh.add(towerGrp);
+    }
 
     const bWaypoints = new Map<string, THREE.Vector3>();
     branch.commits.forEach((c, idx) => {
@@ -1706,5 +2058,132 @@ export function buildVillageWorld(graph: RepoVillageGraph): BuiltWorld {
     };
   }
 
-  return { worldGroup, islands, bridges, gate, animatedProps };
+  // 6. Sunken Misty Ghost Ruin Island for Orphaned Reflog / Dangling Commits!
+  let ghostIsland: IslandLayout | undefined;
+  const ghostList = graph.ghostCommits ?? [];
+  if (ghostList.length > 0) {
+    const ghostGroup = new THREE.Group();
+    const gLen = Math.max(9.6, ghostList.length * 2.5 + 3.6);
+    const gWidth = 5.6;
+    const gCenter = new THREE.Vector3(-mainLength * 0.52 - 7.5, -4.6, 11.5);
+
+    const gMesh = createIslandMesh(
+      gLen,
+      gWidth,
+      hashString('ghost-ruins'),
+      '#a78bfa',
+      animatedProps.floatingCrystals,
+      'winter',
+      true,
+    );
+    gMesh.position.copy(gCenter);
+    ghostGroup.add(gMesh);
+
+    const ruinPillarMat = new THREE.MeshStandardMaterial({
+      color: 0x4c1d95,
+      emissive: 0x312e81,
+      emissiveIntensity: 0.35,
+      roughness: 0.85,
+      flatShading: true,
+    });
+    for (const [px, pz, ph] of [
+      [-gLen * 0.36, 1.65, 1.5],
+      [gLen * 0.34, 1.55, 0.95],
+      [0.4, -1.65, 1.25],
+    ] as const) {
+      const col = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.26, ph, 6), ruinPillarMat);
+      col.position.set(px, ph * 0.5, pz);
+      gMesh.add(col);
+    }
+
+    const gSign = new THREE.Group();
+    const gTex = makeSignTexture(
+      `👻 REFLOG GHOSTS · ${ghostList.length}`,
+      '#a78bfa',
+      'Orphaned commits still in .git/objects',
+    );
+    const gBoard = new THREE.Mesh(
+      new THREE.BoxGeometry(2.45, 0.86, 0.1),
+      new THREE.MeshBasicMaterial({ map: gTex }),
+    );
+    gBoard.position.y = 1.38;
+    gSign.add(gBoard);
+    gSign.position.set(-gLen * 0.2, 0, 1.85);
+    gSign.rotation.y = 0.15;
+    gMesh.add(gSign);
+
+    const gPathPts: THREE.Vector3[] = [];
+    for (let i = 0; i <= 5; i++) {
+      const t = i / 5;
+      const lx = -gLen * 0.36 + t * (gLen * 0.72);
+      gPathPts.push(new THREE.Vector3(gCenter.x + lx, gCenter.y + 0.04, gCenter.z));
+    }
+    const gCurve = new THREE.CatmullRomCurve3(gPathPts);
+    const gWaypoints = new Map<string, THREE.Vector3>();
+    ghostList.forEach((gc, idx) => {
+      const t = ghostList.length <= 1 ? 0.5 : 0.12 + (idx / (ghostList.length - 1)) * 0.76;
+      gWaypoints.set(gc.sha, gCurve.getPointAt(t));
+    });
+
+    worldGroup.add(ghostGroup);
+    animatedProps.ghostGroup = ghostGroup;
+    ghostIsland = {
+      branch: {
+        name: 'ghost-ruins',
+        isDefault: false,
+        color: '#a78bfa',
+        commits: ghostList,
+      },
+      meshGroup: gMesh,
+      center: gCenter,
+      length: gLen,
+      width: gWidth,
+      pathCurve: gCurve,
+      commitWaypoints: gWaypoints,
+      signMesh: gBoard,
+    };
+  }
+
+  // 7. Luminous Cross-Branch Cherry-Pick Sky Portal Arcs!
+  const allWaypointLookup = (sha: string): THREE.Vector3 | null => {
+    for (const isl of islands) {
+      const wp = isl.commitWaypoints.get(sha);
+      if (wp) return wp;
+    }
+    return null;
+  };
+  for (const pair of graph.cherryPickPairs ?? []) {
+    const pA = allWaypointLookup(pair.fromSha);
+    const pB = allWaypointLookup(pair.toSha);
+    if (!pA || !pB) continue;
+    const mid = pA.clone().lerp(pB, 0.5);
+    mid.y = Math.max(pA.y, pB.y) + 4.4;
+    const arcCurve = new THREE.CatmullRomCurve3([
+      pA.clone().add(new THREE.Vector3(0, 0.9, 0)),
+      mid,
+      pB.clone().add(new THREE.Vector3(0, 0.9, 0)),
+    ]);
+    const arcMat = new THREE.MeshBasicMaterial({
+      color: 0x22d3ee,
+      transparent: true,
+      opacity: 0.42,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const arcMesh = new THREE.Mesh(new THREE.TubeGeometry(arcCurve, 32, 0.055, 6, false), arcMat);
+    worldGroup.add(arcMesh);
+    cherryPickArcs.push({ fromSha: pair.fromSha, toSha: pair.toSha, mesh: arcMesh });
+  }
+
+  return {
+    worldGroup,
+    islands,
+    ghostIsland,
+    bridges,
+    gate,
+    stashChests,
+    landmarks,
+    cherryPickArcs,
+    animatedProps,
+  };
 }

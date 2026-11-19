@@ -305,6 +305,21 @@ class LocalGitController extends Controller
             ]
             : null;
 
+        $loadedShas = [];
+        foreach ($branchesPayload as $bp) {
+            foreach ($bp['commits'] as $cm) {
+                $loadedShas[$cm['sha']] = true;
+            }
+        }
+
+        $tags = $this->collectTags($topLevel, $loadedShas);
+        $stashes = $this->collectStashes($topLevel);
+        $stashShas = [];
+        foreach ($stashes as $st) {
+            $stashShas[$st['sha']] = true;
+        }
+        $ghostCommits = $this->collectGhostCommits($topLevel, $loadedShas, $stashShas);
+
         return response()->json([
             'owner' => $ownerName,
             'repo' => $repoName,
@@ -316,6 +331,9 @@ class LocalGitController extends Controller
             'gateVisitors' => array_slice($gateVisitors, 0, 48),
             'totalChangedFiles' => count($gateVisitors),
             'mergeConflict' => $mergeConflict,
+            'tags' => $tags,
+            'stashes' => $stashes,
+            'ghostCommits' => $ghostCommits,
         ]);
     }
 
@@ -579,6 +597,143 @@ class LocalGitController extends Controller
         }
 
         return $commits;
+    }
+
+    /**
+     * @param  array<string, bool>  $loadedShas
+     * @return array<int, array{name: string, sha: string}>
+     */
+    private function collectTags(string $topLevel, array $loadedShas): array
+    {
+        $res = $this->runGit($topLevel, [
+            'for-each-ref',
+            '--sort=-creatordate',
+            '--count=30',
+            '--format=%(refname:short)|%(*objectname)|%(objectname)',
+            'refs/tags/',
+        ]);
+        if (! $res['ok'] || trim($res['stdout']) === '') {
+            return [];
+        }
+
+        $tags = [];
+        foreach (explode("\n", trim($res['stdout'])) as $line) {
+            $parts = explode('|', trim($line));
+            if (count($parts) < 3) {
+                continue;
+            }
+            $name = $parts[0];
+            $sha = strtolower($parts[1] !== '' ? $parts[1] : $parts[2]);
+            if ($name !== '' && isset($loadedShas[$sha])) {
+                $tags[] = ['name' => $name, 'sha' => $sha];
+                if (count($tags) >= 8) {
+                    break;
+                }
+            }
+        }
+
+        return $tags;
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function collectStashes(string $topLevel): array
+    {
+        $res = $this->runGit($topLevel, [
+            'stash',
+            'list',
+            '-n',
+            '6',
+            '--format=%gd%x09%H%x09%cI%x09%gs',
+        ]);
+        if (! $res['ok'] || trim($res['stdout']) === '') {
+            return [];
+        }
+
+        $stashes = [];
+        foreach (explode("\n", trim($res['stdout'])) as $idx => $line) {
+            $cols = explode("\t", trim($line), 4);
+            if (count($cols) < 4) {
+                continue;
+            }
+            $msg = $cols[3];
+            $branch = null;
+            if (preg_match('/^(?:WIP on|On) ([^:]+):\s*(.*)$/', $msg, $m)) {
+                $branch = trim($m[1]);
+                $msg = trim($m[2]) ?: $msg;
+            }
+            $stashes[] = [
+                'index' => $idx,
+                'selector' => $cols[0],
+                'sha' => strtolower($cols[1]),
+                'timestamp' => $cols[2],
+                'message' => $msg,
+                'branch' => $branch,
+            ];
+        }
+
+        return $stashes;
+    }
+
+    /**
+     * @param  array<string, bool>  $loadedShas
+     * @param  array<string, bool>  $stashShas
+     * @return array<int, array<string, mixed>>
+     */
+    private function collectGhostCommits(string $topLevel, array $loadedShas, array $stashShas): array
+    {
+        $res = $this->runGit($topLevel, [
+            'log',
+            '-g',
+            '-n',
+            '40',
+            '--format=%H%x1f%P%x1f%an%x1f%ae%x1f%cI%x1f%s%x1f%gs',
+        ]);
+        if (! $res['ok'] || trim($res['stdout']) === '') {
+            return [];
+        }
+
+        $seen = [];
+        $ghosts = [];
+        foreach (explode("\n", trim($res['stdout'])) as $line) {
+            $cols = explode("\x1f", trim($line));
+            if (count($cols) < 7) {
+                continue;
+            }
+            $sha = strtolower($cols[0]);
+            if ($sha === '' || isset($loadedShas[$sha]) || isset($stashShas[$sha]) || isset($seen[$sha])) {
+                continue;
+            }
+            // Verify this commit is genuinely unreachable from any current branch head!
+            $containsRes = $this->runGit($topLevel, ['branch', '--contains', $sha]);
+            if ($containsRes['ok'] && trim($containsRes['stdout']) !== '') {
+                continue;
+            }
+            $seen[$sha] = true;
+            $reflogNote = $cols[6];
+            $action = str_contains($reflogNote, 'amend')
+                ? 'commit --amend'
+                : (str_contains($reflogNote, 'reset')
+                    ? 'git reset'
+                    : (str_contains($reflogNote, 'rebase') ? 'git rebase' : 'reflog orphan'));
+
+            $ghosts[] = [
+                'sha' => $sha,
+                'parents' => array_values(array_filter(explode(' ', trim($cols[1])))),
+                'authorName' => $cols[2],
+                'authorEmail' => $cols[3],
+                'timestamp' => $cols[4],
+                'subject' => $cols[5],
+                'body' => "Orphaned reflog commit ({$reflogNote}) still preserved inside .git/objects.",
+                'reflogAction' => $action,
+            ];
+            if (count($ghosts) >= 6) {
+                break;
+            }
+        }
+
+        return $ghosts;
     }
 
     /**

@@ -1,4 +1,5 @@
 import { classifyCommitKind } from './demoRepo';
+import { enrichVillageGraphInsights } from './gitInsights';
 import type {
   BranchIslandData,
   CommitData,
@@ -6,6 +7,8 @@ import type {
   GateVisitorFile,
   MergeConflictInfo,
   RepoVillageGraph,
+  StashEntryData,
+  TagMonumentData,
 } from '@/types/village';
 
 const BRANCH_PALETTE = ['#34d399', '#60a5fa', '#f472b6', '#fbbf24', '#a78bfa', '#fb923c'];
@@ -142,6 +145,18 @@ interface LocalRepoApiResponse {
   gateVisitors: GateVisitorFile[];
   totalChangedFiles: number;
   mergeConflict?: MergeConflictInfo | null;
+  tags?: TagMonumentData[];
+  stashes?: StashEntryData[];
+  ghostCommits?: Array<{
+    sha: string;
+    parents: string[];
+    authorName: string;
+    authorEmail: string;
+    timestamp: string;
+    subject: string;
+    body: string;
+    reflogAction?: string;
+  }>;
   error?: string;
 }
 
@@ -287,7 +302,27 @@ export async function loadLocalRepoVillage(
     ]),
   );
 
-  return {
+  const ghostCommits: CommitData[] = (payload.ghostCommits ?? []).map((g) => {
+    const login =
+      g.authorEmail.split('@')[0] || g.authorName.toLowerCase().replace(/\s+/g, '-');
+    return {
+      sha: g.sha,
+      shortSha: g.sha.slice(0, 7),
+      subject: g.subject,
+      body: g.body,
+      authorName: g.authorName,
+      authorLogin: login,
+      timestamp: g.timestamp,
+      branch: 'ghost-ruins',
+      parents: g.parents,
+      children: [],
+      kind: classifyCommitKind(g.subject, g.parents.length),
+      isGhost: true,
+      reflogAction: g.reflogAction ?? 'reflog orphan',
+    };
+  });
+
+  return enrichVillageGraphInsights({
     owner: payload.owner,
     repo: payload.repo,
     description: `Local repository at ${payload.localPath}`,
@@ -301,6 +336,9 @@ export async function loadLocalRepoVillage(
     localPath: payload.localPath,
     gateVisitors: sortedVisitors,
     mergeConflict: payload.mergeConflict ?? undefined,
+    tags: payload.tags ?? [],
+    stashes: payload.stashes ?? [],
+    ghostCommits,
     ciWeather: payload.mergeConflict?.active
       ? {
           status: 'failing',
@@ -309,7 +347,7 @@ export async function loadLocalRepoVillage(
       : undefined,
     branches,
     commitsBySha,
-  };
+  });
 }
 
 export async function hydrateLocalCommitDetail(

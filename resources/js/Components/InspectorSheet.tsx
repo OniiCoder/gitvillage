@@ -33,6 +33,7 @@ interface InspectorSheetProps {
   onLetVisitorsIn: () => void;
   onSyncLocal: () => void;
   onOpenDiffModal: (filename?: string) => void;
+  onJumpCherryPickTwin: () => void;
 }
 
 function formatRelativeTime(iso: string): string {
@@ -61,6 +62,7 @@ export function InspectorSheet({
   onLetVisitorsIn,
   onSyncLocal,
   onOpenDiffModal,
+  onJumpCherryPickTwin,
 }: InspectorSheetProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [filesSectionOpen, setFilesSectionOpen] = useState(true);
@@ -70,7 +72,11 @@ export function InspectorSheet({
       ? `c:${selection.commit.sha}`
       : selection?.kind === 'visitor'
         ? `v:${selection.visitor.filename}`
-        : '';
+        : selection?.kind === 'stash'
+          ? `s:${selection.stash.selector}`
+          : selection?.kind === 'landmark'
+            ? `l:${selection.landmark.filename}`
+            : '';
 
   useEffect(() => {
     setFilesSectionOpen(true);
@@ -333,6 +339,119 @@ export function InspectorSheet({
     );
   }
 
+  if (selection.kind === 'stash') {
+    const st = selection.stash;
+    const stashCopyKey = `st:${st.selector}`;
+    return (
+      <aside
+        id="inspector-card"
+        className="apple-sheet inspector-card"
+        aria-label="Selected Git Stash Metadata"
+      >
+        <div className="inspector-top">
+          <div className="role-chip-row">
+            <span className="meta-pill">📦 Git Stash Chest</span>
+            <span className="meta-pill meta-pill-branch">{st.selector}</span>
+          </div>
+          <button
+            type="button"
+            id="ins-close-btn"
+            className="circle-close-btn"
+            aria-label="Close inspector"
+            onClick={onClose}
+          >
+            <SfIcon name="sf-close" size={12} />
+          </button>
+        </div>
+        <h2 id="ins-subject" className="ins-subject">
+          {st.message}
+        </h2>
+        <p id="ins-quirk" className="ins-quirk">
+          {st.branch ? `Stashed from branch ${st.branch}` : 'Stashed work-in-progress'} ·{' '}
+          {formatRelativeTime(st.timestamp)}
+        </p>
+        <div className="inset-group ins-author-row">
+          <div
+            className="ins-avatar"
+            aria-hidden="true"
+            style={{ background: '#d97706', color: '#fff' }}
+          >
+            📦
+          </div>
+          <div className="ins-author-meta">
+            <strong>Hidden inside .git/refs/stash</strong>
+            <span>
+              Run <code>git stash pop {st.selector}</code> to unpack back into the Village Gate!
+            </span>
+          </div>
+          <div className="ins-sha-group">
+            <button
+              type="button"
+              className="sha-pill"
+              onClick={() => copyText(`git stash pop ${st.selector}`, stashCopyKey)}
+            >
+              <span>{copiedId === stashCopyKey ? 'Copied' : 'Copy cmd'}</span>
+              <SfIcon name="sf-copy" size={12} />
+            </button>
+          </div>
+        </div>
+      </aside>
+    );
+  }
+
+  if (selection.kind === 'landmark') {
+    const lm = selection.landmark;
+    const isHot = lm.kind === 'hotspot';
+    return (
+      <aside
+        id="inspector-card"
+        className="apple-sheet inspector-card"
+        aria-label="Code Landmark Insights"
+      >
+        <div className="inspector-top">
+          <div className="role-chip-row">
+            <span className="meta-pill">
+              {isHot ? '🔥 Volcanic Hotspot Forge' : '🗿 Ancient Stable Monument'}
+            </span>
+            <span className="meta-pill meta-pill-branch">
+              {lm.touches} commit{lm.touches === 1 ? '' : 's'}
+            </span>
+          </div>
+          <button
+            type="button"
+            id="ins-close-btn"
+            className="circle-close-btn"
+            aria-label="Close inspector"
+            onClick={onClose}
+          >
+            <SfIcon name="sf-close" size={12} />
+          </button>
+        </div>
+        <h2 id="ins-subject" className="ins-subject">
+          {lm.filename.split('/').pop() || lm.filename}
+        </h2>
+        <p id="ins-quirk" className="ins-quirk">
+          {lm.filename} · {lm.authorsCount} contributor{lm.authorsCount === 1 ? '' : 's'} ·{' '}
+          {lm.churnLines} lines churned
+        </p>
+        <div className="inset-group ins-conflict-card">
+          <div className="ins-conflict-copy">
+            <strong>
+              {isHot
+                ? `High Tectonic Churn — ${lm.fixCount} bugfix commit${lm.fixCount === 1 ? '' : 's'}`
+                : 'Bedrock Stability — untouched since creation'}
+            </strong>
+            <span>
+              {isHot
+                ? 'Flat file trees hide churn. This file attracts repeated edits & fixes — guard it with extra tests!'
+                : 'Foundational code that settled early and rarely needed emergency patches.'}
+            </span>
+          </div>
+        </div>
+      </aside>
+    );
+  }
+
   const commit = selection.commit;
   const role = getRoleMeta(commit.kind);
   const archetype = computeCommitArchetype(commit);
@@ -362,10 +481,10 @@ export function InspectorSheet({
       <div className="inspector-top">
         <div className="role-chip-row">
           <span id="ins-role-badge" className="meta-pill">
-            {role.badge}
+            {commit.isGhost ? `👻 Ghost · ${commit.reflogAction ?? 'reflog'}` : role.badge}
           </span>
           <span id="ins-branch-badge" className="meta-pill meta-pill-branch">
-            {commit.branch}
+            {commit.isRebasedClone ? `🧬 ${commit.branch} (rebased)` : commit.branch}
           </span>
         </div>
         <button
@@ -406,6 +525,39 @@ export function InspectorSheet({
           </span>
         </div>
       </div>
+
+      {commit.isGhost && (
+        <div className="inset-group ins-ghost-banner">
+          <strong>👻 Orphaned Reflog Commit</strong>
+          <span>
+            Unreachable from any branch after <code>{commit.reflogAction ?? 'rewrite'}</code>, yet
+            still alive inside <code>.git/objects</code> until garbage collection!
+          </span>
+        </div>
+      )}
+
+      {commit.coAuthors && commit.coAuthors.length > 0 && (
+        <div className="inset-group ins-coauthor-banner">
+          <span>
+            🤝 <strong>Co-Authored Tandem Pair:</strong> {commit.authorName} +{' '}
+            {commit.coAuthors.map((ca) => ca.name).join(', ')}
+          </span>
+        </div>
+      )}
+
+      {commit.cherryPickTwinSha && (
+        <div className="inset-group ins-portal-banner">
+          <span>🌀 Linked via Cherry-Pick Sky Portal</span>
+          <button
+            type="button"
+            id="ins-jump-twin-btn"
+            className="conflict-compare-btn"
+            onClick={onJumpCherryPickTwin}
+          >
+            <span>Warp to Twin ({commit.cherryPickTwinSha.slice(0, 7)})</span>
+          </button>
+        </div>
+      )}
 
       <div id="ins-author-row" className="inset-group ins-author-row">
         <div

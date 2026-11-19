@@ -34,16 +34,21 @@ import {
 } from '@/lib/villagerMesh';
 import { type BuiltWorld, buildVillageWorld } from '@/lib/worldBuilder';
 import type {
+  BisectState,
   BridgeLayout,
   CameraMode,
   CommitData,
   GateVisitorEntity,
+  HotspotLandmarkData,
   InspectorSelection,
   IslandLayout,
+  RebaseAnimState,
   RepoVillageGraph,
+  StashEntryData,
   TimeLapseState,
   TimeOfDay,
   VillagerEntity,
+  XRayLens,
 } from '@/types/village';
 
 export interface VillageEngineSnapshot {
@@ -54,6 +59,9 @@ export interface VillageEngineSnapshot {
   gateVisitorsCount: number;
   activeFilter: string;
   activeAuthorKey: string | null;
+  xRayLens: XRayLens;
+  bisect: BisectState;
+  rebaseAnim: RebaseAnimState;
   timeOfDay: TimeOfDay;
   cameraMode: CameraMode;
   muted: boolean;
@@ -118,10 +126,31 @@ export class VillageEngine {
   private hoveredGateVisitor: GateVisitorEntity | null = null;
   private selectedVillager: VillagerEntity | null = null;
   private selectedGateVisitor: GateVisitorEntity | null = null;
+  private selectedStash: StashEntryData | null = null;
+  private selectedLandmark: HotspotLandmarkData | null = null;
+  private openedStashIndices = new Set<number>();
 
   private followVillager = false;
   private activeFilter = 'all';
   private activeAuthorKey: string | null = null;
+  private xRayLens: XRayLens = 'none';
+  private bisectState: BisectState = {
+    active: false,
+    orderedShas: [],
+    lowIdx: 0,
+    highIdx: 0,
+    midIdx: 0,
+    step: 0,
+    maxSteps: 0,
+    resolvedCulpritSha: null,
+  };
+  private rebaseState: RebaseAnimState = {
+    active: false,
+    mode: 'merge',
+    branchName: '',
+    progress: 0,
+  };
+  private preRebaseGraph: RepoVillageGraph | null = null;
   private clanMap = new Map<string, ContributorClanProfile>();
   private timeOfDay: TimeOfDay = 'day';
   private cameraMode: CameraMode = 'orbit';
@@ -315,16 +344,30 @@ export class VillageEngine {
         index: this.selectedGateVisitor.index,
         totalVisitors: this.gateVisitors.length,
       };
+    } else if (this.selectedStash) {
+      selection = {
+        kind: 'stash',
+        stash: this.selectedStash,
+        totalStashes: this.activeGraph.stashes?.length ?? 1,
+      };
+    } else if (this.selectedLandmark) {
+      selection = {
+        kind: 'landmark',
+        landmark: this.selectedLandmark,
+      };
     }
 
     this.cb.onStateChange({
       graph: this.activeGraph,
       clans: [...this.clanMap.values()],
       clanMap: this.clanMap,
-      villagerCount: this.villagers.length,
+      villagerCount: this.villagers.filter((v) => !v.commit.isGhost).length,
       gateVisitorsCount: this.gateVisitors.length,
       activeFilter: this.activeFilter,
       activeAuthorKey: this.activeAuthorKey,
+      xRayLens: this.xRayLens,
+      bisect: { ...this.bisectState },
+      rebaseAnim: { ...this.rebaseState },
       timeOfDay: this.timeOfDay,
       cameraMode: this.cameraMode,
       muted: sound.muted,
@@ -493,13 +536,64 @@ export class VillageEngine {
   private applyVillagerFilterBeams(): void {
     const hasRoleFilter = this.activeFilter !== 'all';
     const hasAuthorFilter = this.activeAuthorKey !== null;
+    const isBusLens = this.xRayLens === 'bus_factor';
+    const isBisect = this.bisectState.active;
 
     for (const v of this.villagers) {
+      const beamMat = v.filterBeam.material as THREE.MeshBasicMaterial;
+
+      if (isBisect && !v.commit.isGhost) {
+        const idx = this.bisectState.orderedShas.indexOf(v.commit.sha);
+        const { lowIdx, highIdx, midIdx, resolvedCulpritSha } = this.bisectState;
+
+        if (resolvedCulpritSha) {
+          const isCulprit = v.commit.sha === resolvedCulpritSha;
+          v.filterBeam.visible = isCulprit;
+          beamMat.color.setHex(0xff453a);
+          beamMat.opacity = isCulprit ? 0.65 : 0;
+          v.root.scale.setScalar(isCulprit ? 1.22 : 0.78);
+        } else if (idx === midIdx) {
+          v.filterBeam.visible = true;
+          beamMat.color.setHex(0xfacc15);
+          beamMat.opacity = 0.62;
+          v.root.scale.setScalar(1.18);
+        } else if (idx === lowIdx) {
+          v.filterBeam.visible = true;
+          beamMat.color.setHex(0x30d158);
+          beamMat.opacity = 0.42;
+          v.root.scale.setScalar(1.0);
+        } else if (idx === highIdx) {
+          v.filterBeam.visible = true;
+          beamMat.color.setHex(0xff453a);
+          beamMat.opacity = 0.42;
+          v.root.scale.setScalar(1.0);
+        } else {
+          v.filterBeam.visible = false;
+          beamMat.opacity = 0;
+          const inWindow = idx > lowIdx && idx < highIdx;
+          v.root.scale.setScalar(inWindow ? 0.96 : 0.72);
+        }
+        continue;
+      }
+
+      v.root.scale.setScalar(v.spawnScale);
+
+      if (isBusLens && !v.commit.isGhost) {
+        const isSoloSilo = Boolean(v.island.branch.soloOwnerName);
+        v.filterBeam.visible = true;
+        beamMat.color.setHex(isSoloSilo ? 0xff453a : 0x30d158);
+        beamMat.opacity = isSoloSilo ? 0.48 : 0.24;
+        continue;
+      }
+
+      beamMat.color.setHex(v.commit.isGhost ? 0xa78bfa : v.clanColor);
       const roleMatch = !hasRoleFilter || v.commit.kind === this.activeFilter;
       const authorMatch = !hasAuthorFilter || v.authorKey === this.activeAuthorKey;
-      const showBeam = (hasRoleFilter || hasAuthorFilter) && roleMatch && authorMatch;
+      const showBeam =
+        (this.xRayLens === 'ghosts' && Boolean(v.commit.isGhost)) ||
+        ((hasRoleFilter || hasAuthorFilter) && roleMatch && authorMatch);
       v.filterBeam.visible = showBeam;
-      (v.filterBeam.material as THREE.MeshBasicMaterial).opacity = showBeam ? 0.28 : 0;
+      beamMat.opacity = showBeam ? 0.34 : 0;
       v.bodyGroup.visible = true;
     }
   }
@@ -507,8 +601,388 @@ export class VillageEngine {
   public closeInspector(): void {
     this.selectedVillager = null;
     this.selectedGateVisitor = null;
+    this.selectedStash = null;
+    this.selectedLandmark = null;
     this.followVillager = false;
     this.emit();
+  }
+
+  public setXRayLens(lens: XRayLens): void {
+    const next = this.xRayLens === lens ? 'none' : lens;
+    this.xRayLens = next;
+    sound.playPop(next === 'none' ? 440 : 587.33);
+    trackEvent('xray_lens_toggled', {
+      lens: next,
+      repo_slug: `${this.activeGraph.owner}/${this.activeGraph.repo}`,
+    });
+    this.applyVillagerFilterBeams();
+
+    if (next === 'bus_factor') {
+      const bf = this.activeGraph.repoBusFactor ?? 1;
+      const soloBranches = this.activeGraph.branches.filter((b) => b.soloOwnerName);
+      this.flyToOverview();
+      this.cb.onToast(
+        `🛡️ Bus Factor X-Ray: Repo Bus Factor = ${bf} · ${soloBranches.length} solo-owned branch silo${soloBranches.length === 1 ? '' : 's'} highlighted in red`,
+        false,
+        5200,
+      );
+    } else if (next === 'hotspots') {
+      this.focusLandmarkByIndex(0);
+    } else if (next === 'ghosts') {
+      this.flyToGhostRuins();
+    } else {
+      this.emit();
+    }
+  }
+
+  public flyToGhostRuins(): void {
+    if (!this.builtWorld?.ghostIsland) {
+      this.cb.onToast('No orphaned reflog ghost commits in this repository.');
+      this.emit();
+      return;
+    }
+    this.followVillager = false;
+    const c = this.builtWorld.ghostIsland.center;
+    this.cameraFlight = {
+      targetLook: new THREE.Vector3(c.x + 0.8, c.y + 1.1, c.z),
+      targetPos: new THREE.Vector3(c.x - 4.2, c.y + 4.5, c.z + 10.4),
+      active: true,
+    };
+    const firstGhost = this.villagers.find((v) => v.commit.isGhost);
+    if (firstGhost) {
+      this.selectedVillager = firstGhost;
+      this.selectedGateVisitor = null;
+      this.selectedStash = null;
+      this.selectedLandmark = null;
+      this.triggerEmote(`c:${firstGhost.commit.sha}`, firstGhost, '👻', 2.8);
+    }
+    this.cb.onToast(
+      `👻 Sunken Reflog Ruins — ${this.activeGraph.ghostCommits?.length ?? 0} orphaned commits still living in .git/objects!`,
+    );
+    this.emit();
+  }
+
+  public focusStashByIndex(idx: number): void {
+    const chest = this.builtWorld?.stashChests[idx];
+    if (!chest) return;
+    this.selectedVillager = null;
+    this.selectedGateVisitor = null;
+    this.selectedLandmark = null;
+    this.selectedStash = chest.stash;
+    this.followVillager = false;
+    this.openedStashIndices.add(idx);
+    chest.glowMesh.visible = true;
+    sound.playSelectVillager('merge');
+
+    const p = chest.worldPos;
+    this.cameraFlight = {
+      targetLook: new THREE.Vector3(p.x, p.y + 0.85, p.z),
+      targetPos: new THREE.Vector3(p.x + 2.6, p.y + 3.4, p.z + 6.4),
+      active: true,
+    };
+    this.cb.onToast(`📦 Opened ${chest.stash.selector}: "${chest.stash.message}"`);
+    this.emit();
+  }
+
+  public focusLandmarkByIndex(idx: number): void {
+    const lm = this.builtWorld?.landmarks[idx];
+    if (!lm) return;
+    this.selectedVillager = null;
+    this.selectedGateVisitor = null;
+    this.selectedStash = null;
+    this.selectedLandmark = lm.data;
+    this.followVillager = false;
+    sound.playPop(540);
+
+    const p = lm.worldPos;
+    const zSign = p.z >= 0 ? 1 : -1;
+    this.cameraFlight = {
+      targetLook: new THREE.Vector3(p.x, p.y + 1.25, p.z),
+      targetPos: new THREE.Vector3(p.x + 2.8, p.y + 4.1, p.z + zSign * 7.4),
+      active: true,
+    };
+    this.cb.onToast(
+      lm.data.kind === 'hotspot'
+        ? `🔥 Code Hotspot Forge: ${lm.data.filename} (${lm.data.touches} commits, ${lm.data.fixCount} fixes)`
+        : `🗿 Ancient Stable Monument: ${lm.data.filename} (untouched foundation)`,
+    );
+    this.emit();
+  }
+
+  public jumpToCherryPickTwin(): void {
+    const twinSha = this.selectedVillager?.commit.cherryPickTwinSha;
+    if (!twinSha) return;
+    const twin = this.villagerBySha.get(twinSha);
+    if (!twin) return;
+    this.focusOnVillager(twin, true);
+    this.triggerEmote(`c:${twin.commit.sha}`, twin, '🌀', 2.6);
+    this.cb.onToast(`🌀 Warped across Sky Portal to cherry-pick twin (${twin.commit.branch})`);
+  }
+
+  // ---------- Interactive 3D `git bisect` Murder-Mystery Hunt ----------
+  public startBisect(): void {
+    const liveVillagers = this.villagers
+      .filter((v) => !v.commit.isGhost)
+      .toSorted((a, b) => (Date.parse(a.commit.timestamp) || 0) - (Date.parse(b.commit.timestamp) || 0));
+
+    if (liveVillagers.length < 3) {
+      this.cb.onToast('Need at least 3 commits to run interactive git bisect.', true);
+      return;
+    }
+
+    this.stopTimeLapse(false);
+    this.xRayLens = 'none';
+    const orderedShas = liveVillagers.map((v) => v.commit.sha);
+    const lowIdx = 0;
+    const highIdx = orderedShas.length - 1;
+    const midIdx = Math.floor((lowIdx + highIdx) / 2);
+    const maxSteps = Math.max(1, Math.ceil(Math.log2(orderedShas.length)));
+
+    this.bisectState = {
+      active: true,
+      orderedShas,
+      lowIdx,
+      highIdx,
+      midIdx,
+      step: 1,
+      maxSteps,
+      resolvedCulpritSha: null,
+    };
+
+    trackEvent('bisect_started', {
+      commit_count: orderedShas.length,
+      repo_slug: `${this.activeGraph.owner}/${this.activeGraph.repo}`,
+    });
+
+    this.applyVillagerFilterBeams();
+    const suspect = this.villagerBySha.get(orderedShas[midIdx]);
+    if (suspect) {
+      this.focusOnVillager(suspect, true);
+      this.triggerEmote(`c:${suspect.commit.sha}`, suspect, '🔍', 3.0);
+    }
+    this.cb.onToast(
+      `🕵️ git bisect started! Testing midpoint commit (${midIdx + 1}/${orderedShas.length}) — ~${maxSteps} steps to catch the bug!`,
+      false,
+      5200,
+    );
+    this.emit();
+  }
+
+  public stepBisectVerdict(verdict: 'good' | 'bad'): void {
+    if (!this.bisectState.active || this.bisectState.resolvedCulpritSha) return;
+    let { lowIdx, highIdx, midIdx, step } = this.bisectState;
+    const { orderedShas, maxSteps } = this.bisectState;
+
+    if (verdict === 'good') {
+      lowIdx = midIdx;
+    } else {
+      highIdx = midIdx;
+    }
+
+    if (highIdx - lowIdx <= 1) {
+      const culpritSha = orderedShas[highIdx];
+      this.bisectState = {
+        active: true,
+        orderedShas,
+        lowIdx,
+        highIdx,
+        midIdx: highIdx,
+        step,
+        maxSteps,
+        resolvedCulpritSha: culpritSha,
+      };
+      this.applyVillagerFilterBeams();
+      const culprit = this.villagerBySha.get(culpritSha);
+      if (culprit) {
+        this.focusOnVillager(culprit, false);
+        culprit.behavior = 'spin';
+        culprit.behaviorTimer = 2.6;
+        culprit.jumpVelocity = 8.0;
+        this.triggerEmote(`c:${culprit.commit.sha}`, culprit, '🚨', 4.0);
+      }
+      sound.playRepoLoaded();
+      trackEvent('bisect_resolved', {
+        steps_taken: step,
+        repo_slug: `${this.activeGraph.owner}/${this.activeGraph.repo}`,
+      });
+      this.cb.onToast(
+        `🚨 Culprit caught in ${step} step${step === 1 ? '' : 's'}! ${culprit?.commit.shortSha} is the first bad commit!`,
+        false,
+        5800,
+      );
+      this.emit();
+      return;
+    }
+
+    midIdx = Math.floor((lowIdx + highIdx) / 2);
+    step += 1;
+    this.bisectState = {
+      active: true,
+      orderedShas,
+      lowIdx,
+      highIdx,
+      midIdx,
+      step,
+      maxSteps,
+      resolvedCulpritSha: null,
+    };
+    this.applyVillagerFilterBeams();
+    const nextSuspect = this.villagerBySha.get(orderedShas[midIdx]);
+    if (nextSuspect) {
+      this.focusOnVillager(nextSuspect, true);
+      this.triggerEmote(`c:${nextSuspect.commit.sha}`, nextSuspect, '🔍', 2.8);
+    }
+    this.emit();
+  }
+
+  public stopBisect(): void {
+    if (!this.bisectState.active) return;
+    this.bisectState = {
+      active: false,
+      orderedShas: [],
+      lowIdx: 0,
+      highIdx: 0,
+      midIdx: 0,
+      step: 0,
+      maxSteps: 0,
+      resolvedCulpritSha: null,
+    };
+    this.applyVillagerFilterBeams();
+    sound.playPop(440);
+    this.emit();
+  }
+
+  // ---------- Interactive 3D Rebase vs. Merge Animator ----------
+  public triggerRebaseVsMergeDemo(targetMode: 'rebase' | 'merge'): void {
+    if (targetMode === 'merge' && this.preRebaseGraph) {
+      const restored = this.preRebaseGraph;
+      this.preRebaseGraph = null;
+      this.rebaseState = {
+        active: false,
+        mode: 'merge',
+        branchName: '',
+        progress: 0,
+      };
+      this.rebuildVillageFromGraph(restored);
+      sound.playPop(523.25);
+      trackEvent('rebase_vs_merge_toggled', {
+        mode: 'merge',
+        branch: restored.defaultBranch,
+      });
+      this.cb.onToast('🌉 Restored Merge topology — original branch SHAs & fork/merge bridges preserved!');
+      return;
+    }
+
+    if (targetMode === 'rebase') {
+      const baseGraph = this.preRebaseGraph ?? this.activeGraph;
+      const mainBr = baseGraph.branches.find((b) => b.isDefault) ?? baseGraph.branches[0];
+      const candidateSide =
+        baseGraph.branches.find((b) => !b.isDefault && !b.mergeIntoSha && b.commits.length > 0) ??
+        baseGraph.branches.find((b) => !b.isDefault && b.commits.length > 0);
+
+      if (!mainBr || !candidateSide) {
+        this.cb.onToast('Need at least one feature branch to animate git rebase vs merge.', true);
+        return;
+      }
+
+      if (!this.preRebaseGraph) {
+        this.preRebaseGraph = baseGraph;
+      }
+
+      // Clone commits onto tip of main with brand-new SHAs while turning originals into Reflog Ghosts!
+      const headTip = mainBr.commits.at(-1);
+      let prevSha = headTip?.sha ?? '';
+      const rebasedClones: CommitData[] = [];
+      const newGhosts: CommitData[] = [...(baseGraph.ghostCommits ?? [])];
+
+      candidateSide.commits.forEach((orig, idx) => {
+        const newSha = `reb${idx + 1}f9${orig.sha.slice(6)}`;
+        rebasedClones.push({
+          ...orig,
+          sha: newSha,
+          shortSha: newSha.slice(0, 7),
+          branch: mainBr.name,
+          parents: prevSha ? [prevSha] : [],
+          children: [],
+          timestamp: new Date(Date.now() + idx * 1000).toISOString(),
+          body: `${orig.body}\n\n[Rebased onto ${mainBr.name} — new SHA ${newSha.slice(0, 7)}, original ${orig.shortSha} became a reflog ghost]`.trim(),
+          isRebasedClone: true,
+          rebasedFromSha: orig.sha,
+        });
+        prevSha = newSha;
+
+        if (!newGhosts.some((g) => g.sha === orig.sha)) {
+          newGhosts.unshift({
+            ...orig,
+            branch: 'ghost-ruins',
+            isGhost: true,
+            reflogAction: `rebased ${candidateSide.name}`,
+            body: `Original pre-rebase commit (${orig.shortSha}) left behind in reflog when ${candidateSide.name} was replayed onto ${mainBr.name}!`,
+          });
+        }
+      });
+
+      const nextCommitsBySha = new Map<string, CommitData>();
+      const nextBranches = baseGraph.branches
+        .filter((b) => b.name !== candidateSide.name)
+        .map((b) => {
+          if (b.name !== mainBr.name) {
+            b.commits.forEach((c) => nextCommitsBySha.set(c.sha, { ...c, children: [...c.children] }));
+            return b;
+          }
+          const combined = [...b.commits.map((c) => ({ ...c, children: [...c.children] })), ...rebasedClones];
+          combined.forEach((c) => nextCommitsBySha.set(c.sha, c));
+          return {
+            ...b,
+            commits: combined,
+          };
+        });
+
+      for (const c of nextCommitsBySha.values()) {
+        for (const p of c.parents) {
+          const par = nextCommitsBySha.get(p);
+          if (par && !par.children.includes(c.sha)) par.children.push(c.sha);
+        }
+      }
+
+      const rebasedGraph: RepoVillageGraph = {
+        ...baseGraph,
+        branches: nextBranches,
+        commitsBySha: nextCommitsBySha,
+        ghostCommits: newGhosts.slice(0, 7),
+      };
+
+      this.rebaseState = {
+        active: true,
+        mode: 'rebase',
+        branchName: candidateSide.name,
+        progress: 1,
+      };
+      this.rebuildVillageFromGraph(rebasedGraph);
+
+      // Animate newly rebased clones popping in at HEAD with ✨ emotes!
+      for (const rc of rebasedClones) {
+        const ent = this.villagerBySha.get(rc.sha);
+        if (ent) {
+          ent.spawnScale = 0.08;
+          ent.root.scale.setScalar(0.08);
+          ent.jumpVelocity = 8.5;
+          this.triggerEmote(`c:${rc.sha}`, ent, '🧬', 3.6);
+        }
+      }
+
+      sound.playRepoLoaded();
+      trackEvent('rebase_vs_merge_toggled', {
+        mode: 'rebase',
+        branch: candidateSide.name,
+      });
+      this.cb.onToast(
+        `🧬 Rebased "${candidateSide.name}" onto ${mainBr.name}! ${rebasedClones.length} commits cloned with new SHAs — originals moved to Reflog Ghost Ruins 👻`,
+        false,
+        6200,
+      );
+      this.emit();
+    }
   }
 
   public toggleFollowSelected(): void {
@@ -1022,6 +1496,8 @@ export class VillageEngine {
   public focusOnVillager(v: VillagerEntity, playChime = true): void {
     this.selectedVillager = v;
     this.selectedGateVisitor = null;
+    this.selectedStash = null;
+    this.selectedLandmark = null;
     if (playChime) {
       sound.playSelectVillager(v.commit.kind);
       trackEvent('commit_inspected', {
@@ -1083,6 +1559,8 @@ export class VillageEngine {
   public focusOnGateVisitor(gv: GateVisitorEntity, playChime = true, moveCamera = true): void {
     this.selectedGateVisitor = gv;
     this.selectedVillager = null;
+    this.selectedStash = null;
+    this.selectedLandmark = null;
     this.followVillager = false;
 
     if (playChime) {
@@ -1126,9 +1604,14 @@ export class VillageEngine {
     if (!options.preserveCamera) {
       this.selectedVillager = null;
       this.selectedGateVisitor = null;
+      this.selectedStash = null;
+      this.selectedLandmark = null;
       this.activeAuthorKey = null;
       this.followVillager = false;
+      this.bisectState.active = false;
+      this.bisectState.resolvedCulpritSha = null;
     }
+    this.openedStashIndices.clear();
     this.hoverPill.hidden = true;
     this.gatePreviewOpenTimer = 0;
     this.conflictRepairProgress = 0;
@@ -1167,6 +1650,25 @@ export class VillageEngine {
         emoteEl.hidden = true;
         this.overlayLayer.appendChild(emoteEl);
         this.emoteElements.set(`c:${commit.sha}`, emoteEl);
+      });
+    }
+
+    // Spawn Translucent Spirit Villagers on the Sunken Reflog Ghost Ruin Island!
+    if (this.builtWorld.ghostIsland) {
+      const gIsl = this.builtWorld.ghostIsland;
+      const ghosts = graph.ghostCommits ?? [];
+      ghosts.forEach((ghostCommit, idx) => {
+        const clan = this.clanMap.get(normalizeAuthorKey(ghostCommit));
+        const entity = createVillagerEntity(ghostCommit, gIsl, idx, ghosts.length, clan);
+        this.builtWorld!.worldGroup.add(entity.root);
+        this.villagers.push(entity);
+        this.villagerBySha.set(ghostCommit.sha, entity);
+
+        const emoteEl = document.createElement('div');
+        emoteEl.className = 'emote-bubble';
+        emoteEl.hidden = true;
+        this.overlayLayer.appendChild(emoteEl);
+        this.emoteElements.set(`c:${ghostCommit.sha}`, emoteEl);
       });
     }
 
@@ -1779,6 +2281,10 @@ export class VillageEngine {
         if (v.root.visible) boxes.push(v.hitBox);
       }
       for (const gv of this.gateVisitors) boxes.push(gv.hitBox);
+      if (this.builtWorld) {
+        for (const sc of this.builtWorld.stashChests) boxes.push(sc.hitBox);
+        for (const lm of this.builtWorld.landmarks) boxes.push(lm.hitBox);
+      }
       return boxes;
     };
 
@@ -1791,6 +2297,35 @@ export class VillageEngine {
 
       if (hits.length > 0) {
         const ud = hits[0].object.userData;
+        if (typeof ud.stashIndex === 'number') {
+          const sc = this.builtWorld?.stashChests[ud.stashIndex];
+          this.hoveredVillager = null;
+          this.hoveredGateVisitor = null;
+          if (sc) {
+            this.canvas.style.cursor = 'pointer';
+            this.hoverPill.textContent = `📦 ${sc.stash.selector} · ${sc.stash.message}`;
+            this.hoverPill.style.left = `${e.clientX}px`;
+            this.hoverPill.style.top = `${e.clientY}px`;
+            this.hoverPill.hidden = false;
+          }
+          return;
+        }
+        if (typeof ud.landmarkIndex === 'number') {
+          const lm = this.builtWorld?.landmarks[ud.landmarkIndex];
+          this.hoveredVillager = null;
+          this.hoveredGateVisitor = null;
+          if (lm) {
+            this.canvas.style.cursor = 'pointer';
+            this.hoverPill.textContent =
+              lm.data.kind === 'hotspot'
+                ? `🔥 Hotspot Forge · ${lm.data.filename} (${lm.data.touches} commits, ${lm.data.fixCount} fixes)`
+                : `🗿 Ancient Monument · ${lm.data.filename} (stable foundation)`;
+            this.hoverPill.style.left = `${e.clientX}px`;
+            this.hoverPill.style.top = `${e.clientY}px`;
+            this.hoverPill.hidden = false;
+          }
+          return;
+        }
         if (typeof ud.visitorIndex === 'number') {
           const gv = this.gateVisitors[ud.visitorIndex] ?? null;
           if (gv !== this.hoveredGateVisitor) {
@@ -1827,7 +2362,12 @@ export class VillageEngine {
           const arch = computeCommitArchetype(ent.commit);
           const clan = this.clanMap.get(ent.authorKey);
           const clanTag = clan ? `${clan.emblem} ${clan.initials} · ` : '';
-          this.hoverPill.textContent = `${arch.emoji} ${arch.title} · ${clanTag}${ent.commit.shortSha} · ${cargo.filesCount}f · ${ent.commit.subject}`;
+          const prefix = ent.commit.isGhost
+            ? `👻 Reflog Ghost (${ent.commit.reflogAction ?? 'orphan'}) · `
+            : ent.commit.coAuthors?.length
+              ? `🤝 Pair (${ent.commit.authorName} + ${ent.commit.coAuthors[0].name}) · `
+              : `${arch.emoji} ${arch.title} · `;
+          this.hoverPill.textContent = `${prefix}${clanTag}${ent.commit.shortSha} · ${cargo.filesCount}f · ${ent.commit.subject}`;
           this.hoverPill.style.left = `${e.clientX}px`;
           this.hoverPill.style.top = `${e.clientY}px`;
           this.hoverPill.hidden = false;
@@ -1857,6 +2397,14 @@ export class VillageEngine {
       const hits = this.raycaster.intersectObjects(getAllHitBoxes(), false);
       if (hits.length > 0) {
         const ud = hits[0].object.userData;
+        if (typeof ud.stashIndex === 'number') {
+          this.focusStashByIndex(ud.stashIndex);
+          return;
+        }
+        if (typeof ud.landmarkIndex === 'number') {
+          this.focusLandmarkByIndex(ud.landmarkIndex);
+          return;
+        }
         if (typeof ud.visitorIndex === 'number') {
           const gv = this.gateVisitors[ud.visitorIndex];
           if (gv) this.focusOnGateVisitor(gv);
@@ -2888,6 +3436,42 @@ export class VillageEngine {
       if (this.builtWorld.animatedProps.fireflies) {
         this.builtWorld.animatedProps.fireflies.rotation.y = Math.sin(elapsed * 0.12) * 0.15;
       }
+      if (this.builtWorld.animatedProps.forgeEmbers) {
+        const eAttr = this.builtWorld.animatedProps.forgeEmbers.geometry.getAttribute(
+          'position',
+        ) as THREE.BufferAttribute;
+        const eArr = eAttr.array as Float32Array;
+        for (let i = 0; i < eArr.length; i += 3) {
+          eArr[i + 1] += dt * 1.45;
+          if (eArr[i + 1] > 3.6) {
+            eArr[i + 1] = 0.78;
+          }
+        }
+        eAttr.needsUpdate = true;
+      }
+      for (const [sIdx, chest] of this.builtWorld.stashChests.entries()) {
+        const isOpen = this.openedStashIndices.has(sIdx) || this.selectedStash?.index === sIdx;
+        const targetLid = isOpen ? -1.18 : 0;
+        chest.lidPivot.rotation.x += (targetLid - chest.lidPivot.rotation.x) * Math.min(1, dt * 8);
+        if (chest.glowMesh.visible) {
+          chest.glowMesh.rotation.y += dt * 3.2;
+          chest.glowMesh.position.y = 0.56 + Math.sin(elapsed * 4.5 + sIdx) * 0.08;
+        }
+      }
+      const activeTwinSha = (this.hoveredVillager ?? this.selectedVillager)?.commit.sha;
+      for (const arc of this.builtWorld.cherryPickArcs) {
+        const mat = arc.mesh.material as THREE.MeshBasicMaterial;
+        const highlighted = activeTwinSha === arc.fromSha || activeTwinSha === arc.toSha;
+        mat.opacity = highlighted ? 0.88 : 0.34 + Math.sin(elapsed * 3.2) * 0.08;
+      }
+      for (const v of this.villagers) {
+        if (v.portalRing) {
+          v.portalRing.rotation.z += dt * 2.2;
+        }
+        if (v.commit.isGhost && v.jumpY === 0) {
+          v.bodyGroup.position.y = 0.18 + Math.sin(elapsed * 2.8 + v.phaseOffset) * 0.12;
+        }
+      }
       if (this.timeOfDay === 'storm' && this.builtWorld.animatedProps.stormGroup) {
         const rain = this.builtWorld.animatedProps.rainLines;
         if (rain) {
@@ -2994,9 +3578,13 @@ export class VillageEngine {
       get activeGraph() {
         return self.activeGraph;
       },
+      get bisectState() {
+        return self.bisectState;
+      },
       keysPressed: this.keysPressed,
       explorer: this.explorer,
       focusOnVillager: (v: VillagerEntity, play = true) => self.focusOnVillager(v, play),
+      focusVillagerBySha: (s: string) => self.focusVillagerBySha(s),
       focusOnGateVisitor: (gv: GateVisitorEntity, play = true, move = true) =>
         self.focusOnGateVisitor(gv, play, move),
       flyToOverview: () => self.flyToOverview(),
@@ -3004,6 +3592,14 @@ export class VillageEngine {
       flyToConflictZone: (sel = true) => self.flyToConflictZone(sel),
       loadConflictDemo: (u = false) => self.loadConflictDemo(u),
       resolveSimulatedConflict: () => self.resolveSimulatedConflict(),
+      setXRayLens: (l: XRayLens) => self.setXRayLens(l),
+      flyToGhostRuins: () => self.flyToGhostRuins(),
+      focusStashByIndex: (i: number) => self.focusStashByIndex(i),
+      focusLandmarkByIndex: (i: number) => self.focusLandmarkByIndex(i),
+      startBisect: () => self.startBisect(),
+      stepBisectVerdict: (v: 'good' | 'bad') => self.stepBisectVerdict(v),
+      stopBisect: () => self.stopBisect(),
+      triggerRebaseVsMergeDemo: (m: 'rebase' | 'merge') => self.triggerRebaseVsMergeDemo(m),
       applyAtmosphere: (m: TimeOfDay) => self.applyAtmosphere(m),
       setCameraMode: (m: CameraMode) => self.setCameraMode(m),
       triggerGatePreviewOpen: () => self.triggerGatePreviewOpen(),

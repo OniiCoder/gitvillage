@@ -929,11 +929,102 @@ export function createVillagerEntity(
   const archetypeGroup = new THREE.Group();
   bodyGroup.add(archetypeGroup);
 
+  // Co-Authored-By Tandem Buddy Villager strolling shoulder-to-shoulder!
+  let coAuthorGroup: THREE.Group | undefined;
+  if (commit.coAuthors && commit.coAuthors.length > 0 && !commit.isGhost) {
+    const co = commit.coAuthors[0];
+    const coSeed = hashString(co.login + commit.sha);
+    const coColor = getAuthorColorHex(co.login);
+    const coSkin = SKIN_TONES[coSeed % SKIN_TONES.length];
+    const coEars: ClanEarStyle[] = ['fox', 'bear', 'antler', 'lynx', 'wing', 'antenna'];
+    const coEarStyle = coEars[coSeed % coEars.length];
+
+    coAuthorGroup = new THREE.Group();
+    coAuthorGroup.position.set(0.46, 0, -0.06);
+    coAuthorGroup.scale.setScalar(0.84);
+
+    const coTunicMat = new THREE.MeshStandardMaterial({ color: coColor, roughness: 0.55 });
+    const coSkinMat = new THREE.MeshStandardMaterial({ color: coSkin, roughness: 0.68 });
+    const coPantsMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8 });
+
+    const coTorso = new THREE.Mesh(torsoGeo, coTunicMat);
+    coTorso.position.y = 0.48;
+    coTorso.castShadow = true;
+    coAuthorGroup.add(coTorso);
+
+    for (const sgn of [-1, 1]) {
+      const cLeg = new THREE.Mesh(limbGeo, coPantsMat);
+      cLeg.position.set(sgn * 0.11, 0.14, 0);
+      coAuthorGroup.add(cLeg);
+      const cArm = new THREE.Mesh(limbGeo, coSkinMat);
+      cArm.position.set(sgn * 0.27, 0.52, 0);
+      if (sgn === -1) cArm.rotation.z = 0.42; // friendly arm-in-arm link!
+      coAuthorGroup.add(cArm);
+    }
+
+    const coHead = new THREE.Group();
+    coHead.position.set(0, 0.94, 0);
+    const coHeadMesh = new THREE.Mesh(headGeo, coSkinMat);
+    coHeadMesh.castShadow = true;
+    const clEye = new THREE.Mesh(eyeGeo, eyeMat);
+    clEye.position.set(-0.1, 0.03, 0.225);
+    const crEye = new THREE.Mesh(eyeGeo, eyeMat);
+    crEye.position.set(0.1, 0.03, 0.225);
+    coHead.add(coHeadMesh, clEye, crEye);
+    attachClanHeadTraits(coEarStyle, coColor, coHead, coSkinMat);
+    coAuthorGroup.add(coHead);
+
+    // Tandem glowing gold-cyan link cord between pair-programming co-authors
+    const linkBar = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.02, 0.02, 0.36, 6),
+      new THREE.MeshBasicMaterial({ color: 0xfef08a }),
+    );
+    linkBar.rotation.z = Math.PI / 2;
+    linkBar.position.set(-0.23, 0.5, 0);
+    coAuthorGroup.add(linkBar);
+
+    bodyGroup.add(coAuthorGroup);
+  }
+
+  //Cherry-Pick Twin Spinning Portal Ring at feet!
+  let portalRing: THREE.Object3D | undefined;
+  if (commit.cherryPickTwinSha) {
+    const portalGrp = new THREE.Group();
+    portalGrp.position.y = 0.09;
+    const outerPortal = new THREE.Mesh(
+      new THREE.TorusGeometry(0.56, 0.035, 6, 20),
+      new THREE.MeshBasicMaterial({ color: 0x22d3ee }),
+    );
+    outerPortal.rotation.x = Math.PI / 2;
+    const innerPortal = new THREE.Mesh(
+      new THREE.TorusGeometry(0.44, 0.024, 6, 16),
+      new THREE.MeshBasicMaterial({ color: 0xe879f9 }),
+    );
+    innerPortal.rotation.x = Math.PI / 2;
+    portalGrp.add(outerPortal, innerPortal);
+    root.add(portalGrp);
+    portalRing = portalGrp;
+  }
+
+  // Ethereal Spirit Shader Look for Reflog / Dangling Ghost Commits!
+  if (commit.isGhost) {
+    bodyGroup.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial) {
+        child.material = child.material.clone();
+        child.material.transparent = true;
+        child.material.opacity = 0.6;
+        child.material.emissive = new THREE.Color(0x818cf8);
+        child.material.emissiveIntensity = 0.55;
+        child.castShadow = false;
+      }
+    });
+  }
+
   // Persistent Contributor Clan Ring on ground
   const auraMat = new THREE.MeshBasicMaterial({
-    color: new THREE.Color(tunicColor),
+    color: commit.isGhost ? new THREE.Color(0xa78bfa) : new THREE.Color(tunicColor),
     transparent: true,
-    opacity: 0.28,
+    opacity: commit.isGhost ? 0.52 : 0.28,
     side: THREE.DoubleSide,
     depthWrite: false,
   });
@@ -977,6 +1068,8 @@ export function createVillagerEntity(
     rightLeg,
     cargoGroup,
     archetypeGroup,
+    coAuthorGroup,
+    portalRing,
     burden,
     spawnScale: 1,
     auraRing,

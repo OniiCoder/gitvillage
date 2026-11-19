@@ -47,6 +47,59 @@ export interface MergeConflictInfo {
   isSimulated?: boolean;
 }
 
+export interface CoAuthorInfo {
+  name: string;
+  login: string;
+  email?: string;
+}
+
+export interface TagMonumentData {
+  name: string;
+  sha: string;
+}
+
+export interface StashEntryData {
+  index: number;
+  selector: string;
+  message: string;
+  sha: string;
+  timestamp: string;
+  branch?: string;
+  filesCount?: number;
+}
+
+export type BranchSeason = 'lush' | 'autumn' | 'winter';
+
+export interface HotspotLandmarkData {
+  kind: 'hotspot' | 'monument';
+  filename: string;
+  touches: number;
+  fixCount: number;
+  churnLines: number;
+  authorsCount: number;
+  lastTouchedIso: string;
+}
+
+export type XRayLens = 'none' | 'bus_factor' | 'hotspots' | 'ghosts';
+
+export interface BisectState {
+  active: boolean;
+  orderedShas: string[];
+  lowIdx: number;
+  highIdx: number;
+  midIdx: number;
+  step: number;
+  maxSteps: number;
+  resolvedCulpritSha: string | null;
+}
+
+export interface RebaseAnimState {
+  active: boolean;
+  mode: 'merge' | 'rebase';
+  branchName: string;
+  progress: number;
+}
+
 export interface CommitData {
   sha: string;
   shortSha: string;
@@ -69,6 +122,12 @@ export interface CommitData {
   };
   files?: CommitFileChange[];
   patchesHydrated?: boolean;
+  coAuthors?: CoAuthorInfo[];
+  cherryPickTwinSha?: string;
+  isGhost?: boolean;
+  reflogAction?: string;
+  isRebasedClone?: boolean;
+  rebasedFromSha?: string;
 }
 
 export interface BranchIslandData {
@@ -78,6 +137,11 @@ export interface BranchIslandData {
   commits: CommitData[]; // chronological oldest -> newest along island
   forkFromSha?: string;
   mergeIntoSha?: string;
+  season?: BranchSeason;
+  ageDays?: number;
+  busFactor?: number;
+  soloOwnerKey?: string;
+  soloOwnerName?: string;
 }
 
 export type CiWeatherStatus = 'passing' | 'failing' | 'pending' | 'unknown';
@@ -104,6 +168,12 @@ export interface RepoVillageGraph {
   gateVisitors?: GateVisitorFile[];
   ciWeather?: CiWeatherInfo;
   mergeConflict?: MergeConflictInfo;
+  tags?: TagMonumentData[];
+  stashes?: StashEntryData[];
+  ghostCommits?: CommitData[];
+  cherryPickPairs?: Array<{ fromSha: string; toSha: string }>;
+  hotspots?: HotspotLandmarkData[];
+  repoBusFactor?: number;
   branches: BranchIslandData[];
   commitsBySha: Map<string, CommitData>;
 }
@@ -175,6 +245,8 @@ export interface VillagerEntity {
   rightLeg: THREE.Object3D;
   cargoGroup: THREE.Group;
   archetypeGroup: THREE.Group;
+  coAuthorGroup?: THREE.Group;
+  portalRing?: THREE.Object3D;
   burden: number;
   spawnScale: number;
   auraRing: THREE.Mesh;
@@ -282,6 +354,15 @@ export type InspectorSelection =
       visitor: GateVisitorFile;
       index: number;
       totalVisitors: number;
+    }
+  | {
+      kind: 'stash';
+      stash: StashEntryData;
+      totalStashes: number;
+    }
+  | {
+      kind: 'landmark';
+      landmark: HotspotLandmarkData;
     }
   | null;
 
