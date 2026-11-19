@@ -251,8 +251,8 @@
     top: max(0.75rem, env(safe-area-inset-top, 0px));
     left: 50%;
     transform: translateX(-50%);
-    width: fit-content;
-    max-inline-size: calc(100vw - 1.5rem);
+    inline-size: fit-content;
+    max-inline-size: calc(100dvw - 1.5rem);
     min-block-size: 2.85rem;
     display: flex;
     align-items: center;
@@ -271,7 +271,7 @@
     align-items: center;
     gap: 0.5rem;
     padding-inline-end: 0.15rem;
-    min-inline-size: 0;
+    flex: 0 0 auto;
   }
 
   .brand-glyph {
@@ -291,7 +291,7 @@
     align-items: center;
     gap: 0.48rem;
     white-space: nowrap;
-    min-inline-size: 0;
+    flex: 0 0 auto;
   }
 
   .brand-name {
@@ -311,7 +311,7 @@
     padding: 0.18rem 0.58rem;
     border-radius: var(--radius-capsule);
     max-inline-size: 9.5rem;
-    min-inline-size: 0;
+    flex: 0 0 auto;
     overflow: hidden;
     text-overflow: ellipsis;
   }
@@ -623,8 +623,8 @@
     position: relative;
     display: flex;
     align-items: center;
-    flex: 1 1 15.5rem;
-    min-inline-size: 9.5rem;
+    flex: 1 1 14rem;
+    min-inline-size: 10.5rem;
     max-inline-size: 17.5rem;
     min-block-size: 2.1rem;
     background: rgba(0, 0, 0, 0.24);
@@ -682,8 +682,9 @@
   .toolbar-actions,
   .toolbar-group {
     display: flex;
-    align-items: center;
+    align-items: safe center;
     gap: 0.28rem;
+    flex: 0 0 auto;
   }
 
   .tb-btn {
@@ -3953,43 +3954,65 @@
     }
   }
 
+  @media (max-width: 96em) {
+    .ci-weather-pill,
+    .heatmap-streak-pill {
+      display: none;
+    }
+
+    .contributor-stack > .clan-avatar-btn:nth-child(n + 4) {
+      display: none;
+    }
+
+    .spatial-topbar {
+      gap: 0.36rem;
+      padding-inline: 0.55rem 0.4rem;
+    }
+
+    .toolbar-actions,
+    .toolbar-group {
+      gap: 0.16rem;
+    }
+
+    .tb-btn:not(.tb-icon-only) {
+      padding-inline: 0.5rem;
+      gap: 0.26rem;
+    }
+  }
+
+  @media (max-width: 86em) {
+    .stats-pill {
+      display: none;
+    }
+  }
+
   @media (max-width: 78em) {
-    .ci-weather-pill {
+    .contributor-stack,
+    .brand-meta:has(.academy-active-pill) .meta-pill-branch {
+      display: none;
+    }
+
+    .repo-form {
+      flex: 1 1 11.75rem;
+      min-inline-size: 9.75rem;
+    }
+  }
+
+  @media (max-width: 74em) {
+    .brand-name {
       display: none;
     }
   }
 
   @media (max-width: 68em) {
-    .stats-pill {
-      display: none;
-    }
-    .repo-form {
-      inline-size: 14rem;
-    }
-    .timelapse-hud {
-      bottom: calc(6.5rem + env(safe-area-inset-bottom, 0px));
-    }
-    .bottom-dock {
-      bottom: calc(3.25rem + env(safe-area-inset-bottom, 0px));
-    }
-    .creator-badge {
-      bottom: max(0.6rem, env(safe-area-inset-bottom, 0px));
-      left: 50%;
-      transform: translateX(-50%);
-      max-inline-size: calc(100vw - 1.5rem);
-    }
-  }
-
-  @media (max-width: 52em) {
-    .brand-name,
     .ornament-divider {
       display: none;
     }
 
     .spatial-topbar {
       top: max(0.5rem, env(safe-area-inset-top, 0px));
-      inline-size: min(34rem, calc(100vw - 1rem));
-      max-inline-size: calc(100vw - 1rem);
+      inline-size: min(43.5rem, calc(100dvw - 1rem));
+      max-inline-size: calc(100dvw - 1rem);
       flex-direction: column;
       align-items: stretch;
       justify-content: flex-start;
@@ -3999,30 +4022,41 @@
     }
 
     .brand-cluster {
-      width: 100%;
+      inline-size: 100%;
+      min-inline-size: 0;
       justify-content: space-between;
       padding-inline-end: 0;
       gap: 0.42rem;
     }
 
     .brand-meta {
-      flex: 1;
+      flex: 1 1 auto;
       min-inline-size: 0;
+      overflow: clip;
       gap: 0.4rem;
+    }
+
+    .brand-name {
+      display: inline;
     }
 
     .branch-pill-btn {
       flex: 0 1 auto;
-      max-inline-size: 9.5rem;
+      max-inline-size: 10.5rem;
       min-inline-size: 0;
     }
 
     .contributor-stack {
+      display: inline-flex;
       margin-inline-start: auto;
     }
 
+    .contributor-stack > .clan-avatar-btn:nth-child(n + 4) {
+      display: grid;
+    }
+
     .repo-form {
-      flex: none;
+      flex: 0 0 auto;
       inline-size: 100%;
       min-inline-size: 0;
       max-inline-size: none;
@@ -4045,7 +4079,7 @@
 
     .toast-banner {
       top: calc(8.9rem + env(safe-area-inset-top, 0px));
-      max-inline-size: calc(100vw - 1.25rem);
+      max-inline-size: calc(100dvw - 1.25rem);
     }
 
     .hud-popover,
@@ -4053,15 +4087,15 @@
       inset: 0;
       position-area: none;
       margin: calc(8.9rem + env(safe-area-inset-top, 0px)) auto auto;
-      inline-size: min(34rem, calc(100vw - 1rem));
+      inline-size: min(43.5rem, calc(100dvw - 1rem));
       max-block-size: calc(100dvh - 10.2rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
       padding: 0.95rem;
     }
 
     .bottom-dock {
       bottom: calc(3rem + env(safe-area-inset-bottom, 0px));
-      inline-size: min(34rem, calc(100vw - 1rem));
-      max-inline-size: calc(100vw - 1rem);
+      inline-size: min(43.5rem, calc(100dvw - 1rem));
+      max-inline-size: calc(100dvw - 1rem);
       flex-direction: column;
       align-items: stretch;
       gap: 0.26rem;
@@ -4073,8 +4107,9 @@
       inline-size: 100%;
       min-inline-size: 0;
       flex-wrap: wrap;
-      justify-content: center;
-      gap: 0.16rem 0.12rem;
+      flex-wrap: balance;
+      justify-content: safe center;
+      gap: 0.16rem 0.14rem;
     }
 
     .bottom-dock > .toolbar-sep {
@@ -4087,10 +4122,23 @@
       inline-size: 100%;
       min-inline-size: 0;
       flex-wrap: wrap;
+      flex-wrap: balance;
       justify-content: safe center;
       gap: 0.35rem;
       padding-block-start: 0.22rem;
       border-block-start: 0.5px solid var(--hairline-subtle);
+    }
+
+    .creator-badge {
+      bottom: max(0.6rem, env(safe-area-inset-bottom, 0px));
+      left: 50%;
+      transform: translateX(-50%);
+      max-inline-size: calc(100dvw - 1.5rem);
+    }
+
+    .timelapse-hud,
+    .bisect-hud {
+      bottom: calc(8.35rem + env(safe-area-inset-bottom, 0px));
     }
 
     .inspector-card {
@@ -4123,7 +4171,7 @@
     }
 
     .diff-viewer-dialog {
-      inline-size: calc(100vw - 1rem);
+      inline-size: calc(100dvw - 1rem);
       block-size: calc(100dvh - 1.5rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
       max-block-size: calc(100dvh - 1.5rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
     }
@@ -4142,14 +4190,9 @@
     .local-picker-dialog,
     .guide-dialog,
     .share-studio-dialog {
-      inline-size: calc(100vw - 1rem);
+      inline-size: calc(100dvw - 1rem);
       max-block-size: calc(100dvh - 1.5rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
       padding: 1rem;
-    }
-
-    .timelapse-hud,
-    .bisect-hud {
-      bottom: calc(8.35rem + env(safe-area-inset-bottom, 0px));
     }
 
     body:has(#bisect-hud) .inspector-card {
@@ -4158,19 +4201,23 @@
     }
   }
 
-  @media (max-width: 38em) {
+  @media (max-width: 44em) {
+    .brand-name {
+      display: none;
+    }
+
     .toolbar-actions {
       justify-content: space-between;
-      gap: 0.08rem;
+      gap: 0.04rem;
     }
 
     .toolbar-group {
-      gap: 0.08rem;
+      gap: 0.04rem;
     }
 
     .tb-btn {
-      min-inline-size: 2.02rem;
-      min-block-size: 2.02rem;
+      min-inline-size: 1.9rem;
+      min-block-size: 1.9rem;
       padding-inline: 0;
       border-radius: 50%;
       flex: 0 0 auto;
