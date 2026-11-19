@@ -117,6 +117,21 @@ export function PresetsPopover({
             </div>
             <span>Fractured merge bridge, dueling Gate files &amp; Ours vs Theirs diff</span>
           </button>
+          <button
+            type="button"
+            id="presets-heatmap-btn"
+            className="preset-card preset-card-heatmap"
+            onClick={() => {
+              hidePopover();
+              document.getElementById('heatmap-popover')?.showPopover?.();
+            }}
+          >
+            <div className="preset-card-head">
+              <strong>🟩 3D GitHub Contribution Heatmap</strong>
+              <span className="status-dot dot-green" aria-hidden="true" />
+            </div>
+            <span>Turn any @username into a 3D floating skyline &amp; export for social media</span>
+          </button>
         </div>
       </div>
 

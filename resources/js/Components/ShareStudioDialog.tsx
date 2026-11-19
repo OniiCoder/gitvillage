@@ -4,11 +4,13 @@ import { describeRepoForAnalytics, trackEvent } from '@/lib/analytics';
 import { isVideoCaptureSupported } from '@/lib/captureStudio';
 import { sound } from '@/lib/sound';
 import { closeTopLayerDialog, useLightDismissDialog } from '@/lib/topLayer';
-import type { RepoVillageGraph } from '@/types/village';
+import type { GitHubHeatmapData, HeatmapTheme, RepoVillageGraph } from '@/types/village';
 
 interface ShareStudioDialogProps {
   dialogRef: RefObject<HTMLDialogElement | null>;
   graph: RepoVillageGraph;
+  heatmap?: GitHubHeatmapData | null;
+  heatmapTheme?: HeatmapTheme;
   isRecording: boolean;
   recordingProgress: number;
   recordingLabel: string;
@@ -22,6 +24,8 @@ interface ShareStudioDialogProps {
 export function ShareStudioDialog({
   dialogRef,
   graph,
+  heatmap,
+  heatmapTheme = 'emerald',
   isRecording,
   recordingProgress,
   recordingLabel,
@@ -47,11 +51,21 @@ export function ShareStudioDialog({
       : 'OniiCoder/gitvillage';
 
   const shareUrlObj = new URL(origin);
-  if (!graph.isDemo && !graph.isLocal && graph.owner && graph.repo) {
-    shareUrlObj.pathname = `/gh/${graph.owner}/${graph.repo}`;
-  }
-  if (!graph.isLocal && graph.currentBranch && graph.currentBranch !== graph.defaultBranch) {
-    shareUrlObj.searchParams.set('branch', graph.currentBranch);
+  if (heatmap) {
+    shareUrlObj.pathname = `/u/${heatmap.username}`;
+    if (heatmap.year) {
+      shareUrlObj.searchParams.set('year', String(heatmap.year));
+    }
+    if (heatmapTheme && heatmapTheme !== 'emerald') {
+      shareUrlObj.searchParams.set('theme', heatmapTheme);
+    }
+  } else {
+    if (!graph.isDemo && !graph.isLocal && graph.owner && graph.repo) {
+      shareUrlObj.pathname = `/gh/${graph.owner}/${graph.repo}`;
+    }
+    if (!graph.isLocal && graph.currentBranch && graph.currentBranch !== graph.defaultBranch) {
+      shareUrlObj.searchParams.set('branch', graph.currentBranch);
+    }
   }
   const shareUrl = shareUrlObj.toString();
 
@@ -63,9 +77,11 @@ export function ShareStudioDialog({
   const htmlBadge = `<a href="${publicVillageUrl}"><img src="${publicBadgeUrl}" alt="Explore ${badgeSlug} in 3D on GitVillage" height="28"></a>`;
 
   const tweetText = encodeURIComponent(
-    !graph.isDemo && !graph.isLocal
-      ? `Exploring ${graph.owner}/${graph.repo} as a living 3D floating-island world in GitVillage 🏝️`
-      : 'Turn any Git repository into a living 3D floating-island world with GitVillage 🏝️',
+    heatmap
+      ? `My GitHub contribution heatmap as a living 3D floating-island skyline in GitVillage 🏝️🟩 — ${heatmap.totalContributions.toLocaleString()} contributions & a ${heatmap.longestStreak}-day streak!`
+      : !graph.isDemo && !graph.isLocal
+        ? `Exploring ${graph.owner}/${graph.repo} as a living 3D floating-island world in GitVillage 🏝️`
+        : 'Turn any Git repository into a living 3D floating-island world with GitVillage 🏝️',
   );
   const xIntentUrl = `https://x.com/intent/tweet?text=${tweetText}&url=${encodeURIComponent(shareUrl)}`;
   const linkedInIntentUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}`;
@@ -115,8 +131,12 @@ export function ShareStudioDialog({
       {/* 1. Direct Share Link + Social Intents */}
       <div className="sheet-section">
         <div className="section-heading-row">
-          <h3>Shareable Village Link</h3>
-          <span className="section-caption">Includes rich 1200×630 OpenGraph preview card</span>
+          <h3>{heatmap ? `Share @${heatmap.username}'s 3D Skyline` : 'Shareable Village Link'}</h3>
+          <span className="section-caption">
+            {heatmap
+              ? 'Includes live 1200×630 isometric 3D skyline OpenGraph card'
+              : 'Includes rich 1200×630 OpenGraph preview card'}
+          </span>
         </div>
         <div className="share-url-row">
           <input
@@ -132,11 +152,15 @@ export function ShareStudioDialog({
             id="share-copy-url-btn"
             className="apple-primary-btn"
             onClick={() => {
-              trackEvent('village_shared', {
-                ...describeRepoForAnalytics(graph),
-                branch: graph.currentBranch ?? graph.defaultBranch,
-              });
-              void copyWithFeedback(shareUrl, 'url', 'Shareable village link copied to clipboard');
+              if (heatmap) {
+                trackEvent('heatmap_shared', { channel: 'copy_link', theme: heatmapTheme });
+              } else {
+                trackEvent('village_shared', {
+                  ...describeRepoForAnalytics(graph),
+                  branch: graph.currentBranch ?? graph.defaultBranch,
+                });
+              }
+              void copyWithFeedback(shareUrl, 'url', 'Shareable link copied to clipboard');
             }}
           >
             {copiedKey === 'url' ? 'Copied!' : 'Copy Link'}
@@ -234,9 +258,15 @@ export function ShareStudioDialog({
                 <span className="capture-icon-badge badge-amber">
                   <SfIcon name="sf-play" size={14} />
                 </span>
-                <strong>Record Time-Lapse Growth</strong>
+                <strong>
+                  {heatmap ? 'Record 6s Wave + Orbit' : 'Record Time-Lapse Growth'}
+                </strong>
               </div>
-              <span>Watch every island &amp; commit pop into existence on video</span>
+              <span>
+                {heatmap
+                  ? 'Watch all 53 weeks erupt upward in 3D while orbiting the island'
+                  : 'Watch every island & commit pop into existence on video'}
+              </span>
             </button>
           </div>
         )}

@@ -249,4 +249,59 @@ class VillagePageTest extends TestCase
             File::deleteDirectory($tmpDir);
         }
     }
+
+    public function test_github_heatmap_route_api_and_isometric_og_card_render(): void
+    {
+        $mockCalendarHtml = <<<'HTML'
+<div class="js-yearly-contributions">
+  <h2 id="js-contribution-activity-description">1,899 contributions in the last year</h2>
+  <table class="ContributionCalendar-grid">
+    <tbody>
+      <tr>
+        <td data-date="2026-05-10" id="contribution-day-component-0-0" data-level="0" class="ContributionCalendar-day"></td>
+        <tool-tip for="contribution-day-component-0-0">No contributions on May 10th.</tool-tip>
+        <td data-date="2026-05-11" id="contribution-day-component-1-0" data-level="2" class="ContributionCalendar-day"></td>
+        <tool-tip for="contribution-day-component-1-0">9 contributions on May 11th.</tool-tip>
+        <td data-date="2026-05-12" id="contribution-day-component-2-0" data-level="4" class="ContributionCalendar-day"></td>
+        <tool-tip for="contribution-day-component-2-0">34 contributions on May 12th.</tool-tip>
+      </tr>
+    </tbody>
+  </table>
+</div>
+HTML;
+
+        Http::fake([
+            'https://github.com/users/OniiCoder/contributions*' => Http::response($mockCalendarHtml, 200),
+            'https://api.github.com/users/OniiCoder' => Http::response([
+                'login' => 'OniiCoder',
+                'name' => 'Peter Perez',
+                'avatar_url' => 'https://github.com/OniiCoder.png',
+            ], 200),
+        ]);
+
+        $this->get('/u/OniiCoder?year=2026&theme=cyber')
+            ->assertOk()
+            ->assertSee('/og/u/OniiCoder.png', false)
+            ->assertInertia(
+                fn (Assert $page) => $page
+                    ->component('Village/Index')
+                    ->where('initialHeatmapUser', 'OniiCoder')
+                    ->where('initialHeatmapYear', 2026)
+                    ->where('initialHeatmapTheme', 'cyber'),
+            );
+
+        $apiRes = $this->getJson('/api/github-heatmap/OniiCoder')->assertOk();
+        $apiRes->assertJsonPath('username', 'OniiCoder')
+            ->assertJsonPath('totalContributions', 1899)
+            ->assertJsonPath('longestStreak', 2)
+            ->assertJsonPath('maxDailyCount', 34)
+            ->assertJsonPath('peakDay.date', '2026-05-12');
+
+        $ogRes = $this->get('/og/u/OniiCoder.png')->assertOk();
+        $this->assertSame('image/png', $ogRes->headers->get('Content-Type'));
+        $ogSize = getimagesizefromstring((string) $ogRes->getContent());
+        $this->assertIsArray($ogSize);
+        $this->assertSame(1200, $ogSize[0]);
+        $this->assertSame(630, $ogSize[1]);
+    }
 }

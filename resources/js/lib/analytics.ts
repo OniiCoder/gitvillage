@@ -117,6 +117,19 @@ export type AnalyticsEventMap = {
     mode: 'rebase' | 'merge';
     branch: string;
   };
+  heatmap_loaded: {
+    theme: string;
+    year: string;
+    total_contributions: number;
+    longest_streak: number;
+  };
+  heatmap_theme_changed: {
+    theme: string;
+  };
+  heatmap_shared: {
+    channel: 'copy_link' | 'x_intent' | 'postcard' | 'video';
+    theme: string;
+  };
 };
 
 /**

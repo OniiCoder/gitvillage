@@ -331,10 +331,45 @@ export interface ShowcaseRepo {
   subtitle: string;
 }
 
+export type HeatmapTheme = 'emerald' | 'cyber' | 'forge' | 'sakura';
+
+export interface HeatmapDayCell {
+  date: string;
+  count: number;
+  level: number; // 0..4
+  weekday: number; // 0 (Sun) .. 6 (Sat)
+  weekIndex: number; // 0..52
+}
+
+export interface HeatmapWeekColumn {
+  weekIndex: number;
+  monthLabel: string | null;
+  days: HeatmapDayCell[];
+}
+
+export interface GitHubHeatmapData {
+  username: string;
+  displayName: string;
+  avatarUrl: string;
+  year: number | null;
+  periodLabel: string;
+  totalContributions: number;
+  longestStreak: number;
+  currentStreak: number;
+  activeDays: number;
+  totalDays: number;
+  maxDailyCount: number;
+  peakDay: { date: string; count: number } | null;
+  weeks: HeatmapWeekColumn[];
+}
+
 export interface VillagePageProps {
   initialRepo: string | null;
   initialLocal: string | null;
   initialBranch?: string | null;
+  initialHeatmapUser?: string | null;
+  initialHeatmapYear?: number | null;
+  initialHeatmapTheme?: string | null;
   directorMode: boolean;
   localServerEnabled: boolean;
   nativeFinderSupported: boolean;
@@ -363,6 +398,11 @@ export type InspectorSelection =
   | {
       kind: 'landmark';
       landmark: HotspotLandmarkData;
+    }
+  | {
+      kind: 'heatmap_day';
+      day: HeatmapDayCell;
+      heatmap: GitHubHeatmapData;
     }
   | null;
 

@@ -2,10 +2,11 @@ import { useEffect, useRef, type FormEvent } from 'react';
 import { BranchSwitcher } from '@/Components/BranchSwitcher';
 import { SfIcon } from '@/Components/SfIconSprite';
 import type { ContributorClanProfile } from '@/lib/villagerMesh';
-import type { CameraMode, RepoVillageGraph, TimeOfDay } from '@/types/village';
+import type { CameraMode, GitHubHeatmapData, RepoVillageGraph, TimeOfDay } from '@/types/village';
 
 interface SpatialTopbarProps {
   graph: RepoVillageGraph;
+  heatmap?: GitHubHeatmapData | null;
   villagerCount: number;
   gateVisitorsCount: number;
   clans: ContributorClanProfile[];
@@ -31,6 +32,7 @@ interface SpatialTopbarProps {
 
 export function SpatialTopbar({
   graph,
+  heatmap,
   villagerCount,
   gateVisitorsCount,
   clans,
@@ -109,9 +111,11 @@ export function SpatialTopbar({
     };
   }, []);
 
-  const statsLabel = graph.isLocal
-    ? `${graph.repo} · ${villagerCount}c · ${gateVisitorsCount} gate`
-    : `${graph.repo} · ${villagerCount} commits`;
+  const statsLabel = heatmap
+    ? `@${heatmap.username} · ${heatmap.totalContributions.toLocaleString()} contribs`
+    : graph.isLocal
+      ? `${graph.repo} · ${villagerCount}c · ${gateVisitorsCount} gate`
+      : `${graph.repo} · ${villagerCount} commits`;
 
   const skySymbol =
     timeOfDay === 'day'
@@ -132,91 +136,109 @@ export function SpatialTopbar({
         </span>
         <div className="brand-meta">
           <span className="brand-name">GitVillage</span>
-          <BranchSwitcher
-            graph={graph}
-            localServerEnabled={localServerEnabled}
-            isLoading={isLoading}
-            onSelectBranch={onSelectBranch}
-          />
-          <span id="repo-stats-pill" className="stats-pill">
-            {statsLabel}
-          </span>
-          {graph.mergeConflict?.active && (
-            <button
-              type="button"
-              id="merge-conflict-pill"
-              className="merge-conflict-pill"
-              title={`Merge conflict (${graph.mergeConflict.oursBranch} ← ${graph.mergeConflict.theirsBranch}) — click to inspect`}
-              onClick={onFocusConflict}
-            >
-              <span aria-hidden="true">⚔️</span>
-              <span>
-                {graph.mergeConflict.conflictedCount}{' '}
-                {graph.mergeConflict.conflictedCount === 1 ? 'Conflict' : 'Conflicts'}
+          {heatmap ? (
+            <>
+              <span className="meta-pill heatmap-user-pill">
+                <span aria-hidden="true">🟩</span> @{heatmap.username}
               </span>
-            </button>
-          )}
-          {!graph.mergeConflict?.active && ciWeather && ciWeather.status !== 'unknown' && (
-            <button
-              type="button"
-              id="ci-weather-pill"
-              className={`ci-weather-pill is-${timeOfDay === 'storm' ? 'failing' : ciWeather.status}`}
-              aria-pressed={timeOfDay === 'storm'}
-              title={`${ciWeather.summary} — click to ${timeOfDay === 'storm' ? 'clear storm sky' : 'preview CI storm clouds'}`}
-              onClick={onToggleCiStorm}
-            >
-              <span aria-hidden="true">
-                {timeOfDay === 'storm' || ciWeather.status === 'failing'
-                  ? '⛈️'
-                  : ciWeather.status === 'pending'
-                    ? '⛅'
-                    : '☀️'}
+              <span id="repo-stats-pill" className="stats-pill">
+                {statsLabel}
               </span>
-              <span>
-                {timeOfDay === 'storm' && ciWeather.status !== 'failing'
-                  ? 'Storm Preview'
-                  : ciWeather.status === 'failing'
-                    ? 'CI Failing'
-                    : ciWeather.status === 'pending'
-                      ? 'CI Running'
-                      : 'CI Passing'}
+              {heatmap.longestStreak > 0 && (
+                <span className="meta-pill heatmap-streak-pill">
+                  🔥 {heatmap.longestStreak}d streak
+                </span>
+              )}
+            </>
+          ) : (
+            <>
+              <BranchSwitcher
+                graph={graph}
+                localServerEnabled={localServerEnabled}
+                isLoading={isLoading}
+                onSelectBranch={onSelectBranch}
+              />
+              <span id="repo-stats-pill" className="stats-pill">
+                {statsLabel}
               </span>
-            </button>
-          )}
-          <div
-            id="contributor-stack"
-            className="contributor-stack"
-            role="group"
-            aria-label="Spotlight contributor clan"
-          >
-            {clans.slice(0, 5).map((clan) => {
-              const avatarSrc =
-                clan.authorAvatar &&
-                clan.authorAvatar.includes('githubusercontent.com') &&
-                !clan.authorAvatar.includes('s=')
-                  ? `${clan.authorAvatar}${clan.authorAvatar.includes('?') ? '&' : '?'}s=64`
-                  : clan.authorAvatar;
-
-              return (
+              {graph.mergeConflict?.active && (
                 <button
-                  key={clan.authorKey}
                   type="button"
-                  className="clan-avatar-btn"
-                  style={{ background: clan.colorCss }}
-                  aria-pressed={activeAuthorKey === clan.authorKey}
-                  aria-label={`Spotlight contributor ${clan.authorName} (${clan.commitCount} commits)`}
-                  title={`${clan.emblem} ${clan.authorName} (@${clan.authorLogin}) · ${clan.earLabel} · ${clan.commitCount} commit${clan.commitCount === 1 ? '' : 's'}`}
-                  onClick={() => onToggleAuthor(clan.authorKey)}
+                  id="merge-conflict-pill"
+                  className="merge-conflict-pill"
+                  title={`Merge conflict (${graph.mergeConflict.oursBranch} ← ${graph.mergeConflict.theirsBranch}) — click to inspect`}
+                  onClick={onFocusConflict}
                 >
-                  {avatarSrc ? (
-                    <img src={avatarSrc} width={26} height={26} decoding="async" alt="" />
-                  ) : (
-                    clan.initials
-                  )}
+                  <span aria-hidden="true">⚔️</span>
+                  <span>
+                    {graph.mergeConflict.conflictedCount}{' '}
+                    {graph.mergeConflict.conflictedCount === 1 ? 'Conflict' : 'Conflicts'}
+                  </span>
                 </button>
-              );
-            })}
-          </div>
+              )}
+              {!graph.mergeConflict?.active && ciWeather && ciWeather.status !== 'unknown' && (
+                <button
+                  type="button"
+                  id="ci-weather-pill"
+                  className={`ci-weather-pill is-${timeOfDay === 'storm' ? 'failing' : ciWeather.status}`}
+                  aria-pressed={timeOfDay === 'storm'}
+                  title={`${ciWeather.summary} — click to ${timeOfDay === 'storm' ? 'clear storm sky' : 'preview CI storm clouds'}`}
+                  onClick={onToggleCiStorm}
+                >
+                  <span aria-hidden="true">
+                    {timeOfDay === 'storm' || ciWeather.status === 'failing'
+                      ? '⛈️'
+                      : ciWeather.status === 'pending'
+                        ? '⛅'
+                        : '☀️'}
+                  </span>
+                  <span>
+                    {timeOfDay === 'storm' && ciWeather.status !== 'failing'
+                      ? 'Storm Preview'
+                      : ciWeather.status === 'failing'
+                        ? 'CI Failing'
+                        : ciWeather.status === 'pending'
+                          ? 'CI Running'
+                          : 'CI Passing'}
+                  </span>
+                </button>
+              )}
+              <div
+                id="contributor-stack"
+                className="contributor-stack"
+                role="group"
+                aria-label="Spotlight contributor clan"
+              >
+                {clans.slice(0, 5).map((clan) => {
+                  const avatarSrc =
+                    clan.authorAvatar &&
+                    clan.authorAvatar.includes('githubusercontent.com') &&
+                    !clan.authorAvatar.includes('s=')
+                      ? `${clan.authorAvatar}${clan.authorAvatar.includes('?') ? '&' : '?'}s=64`
+                      : clan.authorAvatar;
+
+                  return (
+                    <button
+                      key={clan.authorKey}
+                      type="button"
+                      className="clan-avatar-btn"
+                      style={{ background: clan.colorCss }}
+                      aria-pressed={activeAuthorKey === clan.authorKey}
+                      aria-label={`Spotlight contributor ${clan.authorName} (${clan.commitCount} commits)`}
+                      title={`${clan.emblem} ${clan.authorName} (@${clan.authorLogin}) · ${clan.earLabel} · ${clan.commitCount} commit${clan.commitCount === 1 ? '' : 's'}`}
+                      onClick={() => onToggleAuthor(clan.authorKey)}
+                    >
+                      {avatarSrc ? (
+                        <img src={avatarSrc} width={26} height={26} decoding="async" alt="" />
+                      ) : (
+                        clan.initials
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -235,9 +257,11 @@ export function SpatialTopbar({
           onChange={(e) => onRepoInputChange(e.target.value)}
           placeholder={
             localServerEnabled
-              ? 'GitHub owner/repo or local path…'
-              : 'GitHub owner/repo or URL…'
+              ? 'owner/repo, @username, or local path…'
+              : 'GitHub owner/repo or @username…'
           }
+          autoCorrect="off"
+          autoCapitalize="none"
           spellCheck={false}
         />
         <button
@@ -313,6 +337,21 @@ export function SpatialTopbar({
           >
             <SfIcon name="sf-sparkles" size={15} />
             <span>X-Ray</span>
+          </button>
+          <button
+            type="button"
+            id="heatmap-btn"
+            className="tb-btn"
+            aria-pressed={Boolean(heatmap)}
+            aria-label="Heatmap — generate a 3D GitHub contribution heatmap for any username"
+            title="Generate 3D GitHub Contribution Heatmap (@username)"
+            {...({
+              commandfor: 'heatmap-popover',
+              command: 'toggle-popover',
+            } as Record<string, string>)}
+          >
+            <SfIcon name="sf-heatmap" size={15} />
+            <span>Heatmap</span>
           </button>
         </div>
 

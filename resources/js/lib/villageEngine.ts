@@ -32,6 +32,13 @@ import {
   normalizeAuthorKey,
   refreshVillagerCargo,
 } from '@/lib/villagerMesh';
+import {
+  type BuiltHeatmapTower,
+  type BuiltHeatmapWorld,
+  buildHeatmapSkylineWorld,
+  fetchGitHubHeatmapData,
+  normalizeHeatmapTheme,
+} from '@/lib/heatmapBuilder';
 import { type BuiltWorld, buildVillageWorld } from '@/lib/worldBuilder';
 import type {
   BisectState,
@@ -39,6 +46,9 @@ import type {
   CameraMode,
   CommitData,
   GateVisitorEntity,
+  GitHubHeatmapData,
+  HeatmapDayCell,
+  HeatmapTheme,
   HotspotLandmarkData,
   InspectorSelection,
   IslandLayout,
@@ -53,6 +63,8 @@ import type {
 
 export interface VillageEngineSnapshot {
   graph: RepoVillageGraph;
+  heatmap: GitHubHeatmapData | null;
+  heatmapTheme: HeatmapTheme;
   clans: ContributorClanProfile[];
   clanMap: Map<string, ContributorClanProfile>;
   villagerCount: number;
@@ -81,6 +93,9 @@ export interface VillageEngineCallbacks {
     repo?: string | null;
     local?: string | null;
     branch?: string | null;
+    heatmapUser?: string | null;
+    heatmapYear?: number | null;
+    heatmapTheme?: HeatmapTheme | null;
   }) => void;
   onRequestLocalModal: () => void;
 }
@@ -128,7 +143,17 @@ export class VillageEngine {
   private selectedGateVisitor: GateVisitorEntity | null = null;
   private selectedStash: StashEntryData | null = null;
   private selectedLandmark: HotspotLandmarkData | null = null;
+  private selectedHeatmapDay: HeatmapDayCell | null = null;
   private openedStashIndices = new Set<number>();
+
+  private activeHeatmap: GitHubHeatmapData | null = null;
+  private heatmapTheme: HeatmapTheme = 'emerald';
+  private builtHeatmapWorld: BuiltHeatmapWorld | null = null;
+  private heatmapWave = {
+    active: false,
+    elapsed: 0,
+    duration: 1.75,
+  };
 
   private followVillager = false;
   private activeFilter = 'all';
@@ -355,10 +380,18 @@ export class VillageEngine {
         kind: 'landmark',
         landmark: this.selectedLandmark,
       };
+    } else if (this.selectedHeatmapDay && this.activeHeatmap) {
+      selection = {
+        kind: 'heatmap_day',
+        day: this.selectedHeatmapDay,
+        heatmap: this.activeHeatmap,
+      };
     }
 
     this.cb.onStateChange({
       graph: this.activeGraph,
+      heatmap: this.activeHeatmap,
+      heatmapTheme: this.heatmapTheme,
       clans: [...this.clanMap.values()],
       clanMap: this.clanMap,
       villagerCount: this.villagers.filter((v) => !v.commit.isGhost).length,
@@ -603,6 +636,7 @@ export class VillageEngine {
     this.selectedGateVisitor = null;
     this.selectedStash = null;
     this.selectedLandmark = null;
+    this.selectedHeatmapDay = null;
     this.followVillager = false;
     this.emit();
   }
@@ -1036,8 +1070,18 @@ export class VillageEngine {
   }
 
   public flyToOverview(): void {
-    if (!this.builtWorld) return;
     this.followVillager = false;
+    if (this.builtHeatmapWorld) {
+      const dist = Math.max(24, this.builtHeatmapWorld.islandLength * 0.72);
+      this.cameraFlight = {
+        targetLook: new THREE.Vector3(0, 1.35, 0),
+        targetPos: new THREE.Vector3(-dist * 0.22, dist * 0.54, dist * 0.86),
+        active: true,
+      };
+      this.emit();
+      return;
+    }
+    if (!this.builtWorld) return;
     const mainLen = this.builtWorld.islands[0]?.length ?? 28;
     const extraGate = this.builtWorld.gate ? this.builtWorld.gate.dockLength * 0.5 : 0;
     const dist = Math.max(24, (mainLen + extraGate) * 0.72);
@@ -1049,17 +1093,222 @@ export class VillageEngine {
     this.emit();
   }
 
+  public async loadUserHeatmap(
+    username: string,
+    options: {
+      year?: number | null;
+      theme?: string | null;
+      updateUrl?: boolean;
+    } = {},
+  ): Promise<void> {
+    const cleanUser = username.trim().replace(/^@/, '');
+    if (!cleanUser) return;
+
+    this.currentLoadController?.abort();
+    const controller = new AbortController();
+    this.currentLoadController = controller;
+
+    if (options.theme) {
+      this.heatmapTheme = normalizeHeatmapTheme(options.theme);
+    }
+
+    this.isLoading = true;
+    this.emit();
+
+    try {
+      const data = await fetchGitHubHeatmapData(cleanUser, options.year ?? null, controller.signal);
+      if (controller.signal.aborted) return;
+
+      this.stopTimeLapse(false);
+      this.turntableOrbit.active = false;
+      this.bisectState.active = false;
+      this.bisectState.resolvedCulpritSha = null;
+      this.xRayLens = 'none';
+      this.selectedVillager = null;
+      this.selectedGateVisitor = null;
+      this.selectedStash = null;
+      this.selectedLandmark = null;
+      this.selectedHeatmapDay = null;
+      this.followVillager = false;
+      this.hoverPill.hidden = true;
+
+      if (this.builtWorld) {
+        this.scene.remove(this.builtWorld.worldGroup);
+        this.builtWorld = null;
+      }
+      if (this.builtHeatmapWorld) {
+        this.scene.remove(this.builtHeatmapWorld.worldGroup);
+        this.builtHeatmapWorld = null;
+      }
+      this.villagers = [];
+      this.villagerBySha.clear();
+      this.islandByBranch.clear();
+      this.bridgeFreeAt.clear();
+      this.gateVisitors = [];
+      this.overlayLayer.replaceChildren();
+      this.emoteElements.clear();
+
+      this.activeHeatmap = data;
+      this.builtHeatmapWorld = buildHeatmapSkylineWorld(data, this.heatmapTheme);
+      this.scene.add(this.builtHeatmapWorld.worldGroup);
+      this.heatmapWave = {
+        active: true,
+        elapsed: 0,
+        duration: 1.85,
+      };
+
+      if (this.cameraMode !== 'orbit') {
+        this.setCameraMode('orbit');
+      }
+      this.flyToOverview();
+      sound.playPop(659.25);
+
+      trackEvent('heatmap_loaded', {
+        theme: this.heatmapTheme,
+        year: data.year ? String(data.year) : 'rolling',
+        total_contributions: data.totalContributions,
+        longest_streak: data.longestStreak,
+      });
+
+      if (options.updateUrl !== false) {
+        this.cb.onSyncUrl({
+          repo: null,
+          local: null,
+          branch: null,
+          heatmapUser: data.username,
+          heatmapYear: data.year,
+          heatmapTheme: this.heatmapTheme !== 'emerald' ? this.heatmapTheme : null,
+        });
+      }
+
+      this.cb.onToast(
+        `🟩 @${data.username} — ${data.totalContributions.toLocaleString()} contributions (${data.longestStreak}d longest streak)`,
+      );
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      const msg = err instanceof Error ? err.message : `Could not load heatmap for @${cleanUser}.`;
+      this.cb.onToast(msg, true, 5200);
+    } finally {
+      this.isLoading = false;
+      this.emit();
+    }
+  }
+
+  public setHeatmapTheme(theme: HeatmapTheme): void {
+    this.heatmapTheme = theme;
+    if (!this.activeHeatmap) {
+      this.emit();
+      return;
+    }
+    if (this.builtHeatmapWorld) {
+      this.scene.remove(this.builtHeatmapWorld.worldGroup);
+    }
+    this.builtHeatmapWorld = buildHeatmapSkylineWorld(this.activeHeatmap, theme);
+    this.scene.add(this.builtHeatmapWorld.worldGroup);
+    this.heatmapWave = {
+      active: true,
+      elapsed: 0,
+      duration: 1.15,
+    };
+    sound.playPop(620);
+    trackEvent('heatmap_theme_changed', { theme });
+    this.cb.onSyncUrl({
+      repo: null,
+      local: null,
+      branch: null,
+      heatmapUser: this.activeHeatmap.username,
+      heatmapYear: this.activeHeatmap.year,
+      heatmapTheme: theme !== 'emerald' ? theme : null,
+    });
+    this.emit();
+  }
+
+  public replayHeatmapWave(durationSec = 1.95): void {
+    if (!this.builtHeatmapWorld) return;
+    for (const t of this.builtHeatmapWorld.towers) {
+      t.columnMesh.scale.y = 0.05;
+      t.capMesh.position.y = 0.06;
+    }
+    this.heatmapWave = {
+      active: true,
+      elapsed: 0,
+      duration: durationSec,
+    };
+    sound.playPop(587.33);
+  }
+
+  public exitHeatmapMode(): void {
+    if (!this.activeHeatmap && !this.builtHeatmapWorld) return;
+    if (this.builtHeatmapWorld) {
+      this.scene.remove(this.builtHeatmapWorld.worldGroup);
+      this.builtHeatmapWorld = null;
+    }
+    this.activeHeatmap = null;
+    this.selectedHeatmapDay = null;
+    this.heatmapWave.active = false;
+    this.rebuildVillageFromGraph(this.activeGraph);
+    this.flyToOverview();
+    const g = this.activeGraph;
+    this.cb.onSyncUrl({
+      repo: !g.isDemo && !g.isLocal ? `${g.owner}/${g.repo}` : null,
+      local: g.isLocal ? (g.localPath ?? null) : null,
+      branch: g.currentBranch && g.currentBranch !== g.defaultBranch ? g.currentBranch : null,
+      heatmapUser: null,
+      heatmapYear: null,
+      heatmapTheme: null,
+    });
+    this.emit();
+  }
+
+  public focusHeatmapTower(tower: BuiltHeatmapTower): void {
+    this.selectedVillager = null;
+    this.selectedGateVisitor = null;
+    this.selectedStash = null;
+    this.selectedLandmark = null;
+    this.selectedHeatmapDay = tower.day;
+    sound.playPop(tower.day.count > 0 ? 640 : 440);
+    if (this.cameraMode === 'orbit') {
+      const p = tower.worldPos;
+      this.cameraFlight = {
+        targetLook: new THREE.Vector3(p.x, Math.max(0.8, p.y * 0.65), p.z),
+        targetPos: new THREE.Vector3(p.x + 1.8, Math.max(4.6, p.y + 3.6), p.z + 9.2),
+        active: true,
+      };
+    }
+    this.emit();
+  }
+
   public getCanvasElement(): HTMLCanvasElement {
     return this.canvas;
   }
 
   public getTimeLapseDurationMs(): number {
+    if (this.builtHeatmapWorld) {
+      return 6000;
+    }
     const total = Math.max(1, this.villagers.length);
     const interval = Math.max(0.16, Math.min(0.45, 11.0 / total));
     return Math.round((total * interval + 1.4) * 1000);
   }
 
   public startTurntableOrbit(durationSec = 6.0): void {
+    if (this.builtHeatmapWorld) {
+      if (this.cameraMode !== 'orbit') {
+        this.setCameraMode('orbit');
+      }
+      this.followVillager = false;
+      this.cameraFlight.active = false;
+      const dist = Math.max(24, this.builtHeatmapWorld.islandLength * 0.72);
+      this.turntableOrbit = {
+        active: true,
+        elapsed: 0,
+        duration: durationSec,
+        radius: dist * 0.88,
+        height: dist * 0.52,
+        lookAt: new THREE.Vector3(0, 1.35, 0),
+      };
+      return;
+    }
     if (!this.builtWorld) return;
     if (this.cameraMode !== 'orbit') {
       this.setCameraMode('orbit');
@@ -1084,6 +1333,12 @@ export class VillageEngine {
   }
 
   public startTimeLapse(): void {
+    if (this.builtHeatmapWorld) {
+      this.closeInspector();
+      this.replayHeatmapWave(4.6);
+      this.startTurntableOrbit(6.0);
+      return;
+    }
     if (!this.builtWorld || this.villagers.length === 0) return;
     if (this.cameraMode !== 'orbit') {
       this.setCameraMode('orbit');
@@ -1619,6 +1874,13 @@ export class VillageEngine {
     if (this.builtWorld) {
       this.scene.remove(this.builtWorld.worldGroup);
     }
+    if (this.builtHeatmapWorld) {
+      this.scene.remove(this.builtHeatmapWorld.worldGroup);
+      this.builtHeatmapWorld = null;
+    }
+    this.activeHeatmap = null;
+    this.selectedHeatmapDay = null;
+    this.heatmapWave.active = false;
     this.villagers = [];
     this.villagerBySha.clear();
     this.islandByBranch.clear();
@@ -2285,6 +2547,9 @@ export class VillageEngine {
         for (const sc of this.builtWorld.stashChests) boxes.push(sc.hitBox);
         for (const lm of this.builtWorld.landmarks) boxes.push(lm.hitBox);
       }
+      if (this.builtHeatmapWorld) {
+        for (const tw of this.builtHeatmapWorld.towers) boxes.push(tw.hitBox);
+      }
       return boxes;
     };
 
@@ -2297,6 +2562,27 @@ export class VillageEngine {
 
       if (hits.length > 0) {
         const ud = hits[0].object.userData;
+        if (ud.heatmapTower) {
+          const tw = ud.heatmapTower as BuiltHeatmapTower;
+          this.hoveredVillager = null;
+          this.hoveredGateVisitor = null;
+          this.canvas.style.cursor = 'pointer';
+          const dtLabel = new Date(`${tw.day.date}T12:00:00Z`).toLocaleDateString(undefined, {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+          });
+          const countLabel =
+            tw.day.count === 0
+              ? 'No contributions'
+              : `${tw.day.count} contribution${tw.day.count === 1 ? '' : 's'}`;
+          this.hoverPill.textContent = `${tw.isPeak ? '🏆 Peak Day · ' : '🟩 '}${countLabel} · ${dtLabel}`;
+          this.hoverPill.style.left = `${e.clientX}px`;
+          this.hoverPill.style.top = `${e.clientY}px`;
+          this.hoverPill.hidden = false;
+          return;
+        }
         if (typeof ud.stashIndex === 'number') {
           const sc = this.builtWorld?.stashChests[ud.stashIndex];
           this.hoveredVillager = null;
@@ -2397,6 +2683,10 @@ export class VillageEngine {
       const hits = this.raycaster.intersectObjects(getAllHitBoxes(), false);
       if (hits.length > 0) {
         const ud = hits[0].object.userData;
+        if (ud.heatmapTower) {
+          this.focusHeatmapTower(ud.heatmapTower as BuiltHeatmapTower);
+          return;
+        }
         if (typeof ud.stashIndex === 'number') {
           this.focusStashByIndex(ud.stashIndex);
           return;
@@ -3520,6 +3810,60 @@ export class VillageEngine {
     this.updateExplorerWalk(dt, elapsed);
     this.resolveCharacterCollisions(dt, false);
 
+    if (this.builtHeatmapWorld) {
+      const hw = this.builtHeatmapWorld;
+      if (this.heatmapWave.active) {
+        this.heatmapWave.elapsed += dt;
+        const dur = Math.max(0.6, this.heatmapWave.duration);
+        const spread = dur * 0.68;
+        const riseWindow = dur * 0.32;
+        const maxWeek = Math.max(1, (this.activeHeatmap?.weeks.length ?? 53) - 1);
+
+        for (const tw of hw.towers) {
+          const delay = (tw.weekIndex / maxWeek) * spread;
+          const rawT = (this.heatmapWave.elapsed - delay) / riseWindow;
+          const clamped = Math.max(0, Math.min(1, rawT));
+          // Elastic-feeling easeOutBack spring!
+          const c1 = 1.55;
+          const c3 = c1 + 1;
+          const eased =
+            clamped <= 0
+              ? 0.05
+              : clamped >= 1
+                ? 1
+                : Math.max(0.05, 1 + c3 * Math.pow(clamped - 1, 3) + c1 * Math.pow(clamped - 1, 2));
+          const h = Math.max(0.05, tw.targetHeight * eased);
+          tw.columnMesh.scale.y = h;
+          tw.capMesh.position.y = h + 0.035;
+          if (tw.isPeak && hw.peakBeacon) {
+            hw.peakBeacon.position.y = h + 0.08;
+          }
+        }
+        if (this.heatmapWave.elapsed >= dur + 0.15) {
+          this.heatmapWave.active = false;
+        }
+      }
+
+      for (const cr of hw.floatingCrystals) {
+        cr.mesh.position.y = cr.baseY + Math.sin(elapsed * 1.9 + cr.phase) * 0.32;
+        cr.mesh.rotation.y += dt * 0.85;
+      }
+      for (const cl of hw.clouds) {
+        cl.mesh.position.x += cl.speed * dt;
+        if (cl.mesh.position.x > 26) cl.mesh.position.x = -26;
+      }
+      if (hw.mascotArm) {
+        hw.mascotArm.rotation.z = -0.35 + Math.sin(elapsed * 5.2) * 0.28;
+      }
+      if (hw.peakBeacon) {
+        const gem = hw.peakBeacon.children[1];
+        if (gem) {
+          gem.rotation.y += dt * 1.6;
+          gem.position.y = 1.48 + Math.sin(elapsed * 3.1) * 0.1;
+        }
+      }
+    }
+
     if (this.turntableOrbit.active && this.cameraMode === 'orbit') {
       this.turntableOrbit.elapsed += dt;
       const t = Math.min(1, this.turntableOrbit.elapsed / Math.max(0.5, this.turntableOrbit.duration));
@@ -3578,11 +3922,25 @@ export class VillageEngine {
       get activeGraph() {
         return self.activeGraph;
       },
+      get activeHeatmap() {
+        return self.activeHeatmap;
+      },
+      get builtHeatmapWorld() {
+        return self.builtHeatmapWorld;
+      },
       get bisectState() {
         return self.bisectState;
       },
       keysPressed: this.keysPressed,
       explorer: this.explorer,
+      loadUserHeatmap: (
+        u: string,
+        opts?: { year?: number | null; theme?: string | null; updateUrl?: boolean },
+      ) => self.loadUserHeatmap(u, opts),
+      setHeatmapTheme: (t: HeatmapTheme) => self.setHeatmapTheme(t),
+      replayHeatmapWave: (d?: number) => self.replayHeatmapWave(d),
+      exitHeatmapMode: () => self.exitHeatmapMode(),
+      focusHeatmapTower: (tw: BuiltHeatmapTower) => self.focusHeatmapTower(tw),
       focusOnVillager: (v: VillagerEntity, play = true) => self.focusOnVillager(v, play),
       focusVillagerBySha: (s: string) => self.focusVillagerBySha(s),
       focusOnGateVisitor: (gv: GateVisitorEntity, play = true, move = true) =>

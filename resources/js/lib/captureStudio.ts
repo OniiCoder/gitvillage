@@ -1,30 +1,38 @@
-import type { RepoVillageGraph } from '@/types/village';
+import type { GitHubHeatmapData, RepoVillageGraph } from '@/types/village';
 
 function drawWatermarkOverlay(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
   graph: RepoVillageGraph,
+  heatmap?: GitHubHeatmapData | null,
 ): void {
   const scale = Math.max(0.7, Math.min(1.35, width / 1440));
   const pad = Math.round(24 * scale);
   const pillH = Math.round(44 * scale);
 
-  const repoTitle = graph.isDemo
-    ? 'gitvillage/sky-village'
-    : graph.isLocal
-      ? `${graph.repo} (local)`
-      : `${graph.owner}/${graph.repo}`;
-
-  const commitTotal = [...graph.commitsBySha.values()].length;
-  const islandTotal = graph.branches.length;
   const host =
     typeof window !== 'undefined' && window.location.hostname && !window.location.hostname.endsWith('.test')
       ? window.location.hostname
       : 'gitvillage.on-forge.com';
 
-  const leftText = `GitVillage · ${repoTitle}`;
-  const rightText = `${commitTotal} commits · ${islandTotal} island${islandTotal === 1 ? '' : 's'} · ${host}`;
+  let leftText: string;
+  let rightText: string;
+  if (heatmap) {
+    leftText = `GitVillage · @${heatmap.username}`;
+    rightText = `${heatmap.totalContributions.toLocaleString()} contribs · ${heatmap.longestStreak}d streak · ${host}/u/${heatmap.username}`;
+  } else {
+    const repoTitle = graph.isDemo
+      ? 'gitvillage/sky-village'
+      : graph.isLocal
+        ? `${graph.repo} (local)`
+        : `${graph.owner}/${graph.repo}`;
+
+    const commitTotal = [...graph.commitsBySha.values()].length;
+    const islandTotal = graph.branches.length;
+    leftText = `GitVillage · ${repoTitle}`;
+    rightText = `${commitTotal} commits · ${islandTotal} island${islandTotal === 1 ? '' : 's'} · ${host}`;
+  }
 
   ctx.save();
   ctx.font = `600 ${Math.round(14 * scale)}px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif`;
@@ -83,8 +91,12 @@ function drawWatermarkOverlay(
   ctx.restore();
 }
 
-function sanitizeFileSlug(graph: RepoVillageGraph): string {
-  const raw = graph.isDemo ? 'sky-village' : `${graph.owner}-${graph.repo}`;
+function sanitizeFileSlug(graph: RepoVillageGraph, heatmap?: GitHubHeatmapData | null): string {
+  const raw = heatmap
+    ? `heatmap-${heatmap.username}`
+    : graph.isDemo
+      ? 'sky-village'
+      : `${graph.owner}-${graph.repo}`;
   return raw.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'gitvillage';
 }
 
@@ -102,6 +114,7 @@ function triggerBlobDownload(blob: Blob, filename: string): void {
 export async function capturePostcardPng(
   sourceCanvas: HTMLCanvasElement,
   graph: RepoVillageGraph,
+  heatmap?: GitHubHeatmapData | null,
 ): Promise<string> {
   const w = Math.max(960, sourceCanvas.width);
   const h = Math.max(540, sourceCanvas.height);
@@ -112,12 +125,12 @@ export async function capturePostcardPng(
   if (!ctx) throw new Error('Canvas 2D context unavailable.');
 
   ctx.drawImage(sourceCanvas, 0, 0, w, h);
-  drawWatermarkOverlay(ctx, w, h, graph);
+  drawWatermarkOverlay(ctx, w, h, graph, heatmap);
 
   const blob = await new Promise<Blob | null>((resolve) => out.toBlob(resolve, 'image/png'));
   if (!blob) throw new Error('Failed to encode postcard PNG.');
 
-  const filename = `gitvillage-${sanitizeFileSlug(graph)}-postcard.png`;
+  const filename = `gitvillage-${sanitizeFileSlug(graph, heatmap)}-postcard.png`;
   triggerBlobDownload(blob, filename);
   return filename;
 }
@@ -152,6 +165,7 @@ export async function recordVillageVideoClip(
   options: {
     durationMs: number;
     labelSuffix: string;
+    heatmap?: GitHubHeatmapData | null;
     onProgress?: (percent: number) => void;
     signal?: AbortSignal;
   },
@@ -196,7 +210,7 @@ export async function recordVillageVideoClip(
   const pumpFrame = () => {
     if (stopped) return;
     ctx.drawImage(sourceCanvas, 0, 0, compW, compH);
-    drawWatermarkOverlay(ctx, compW, compH, graph);
+    drawWatermarkOverlay(ctx, compW, compH, graph, options.heatmap);
     const elapsed = performance.now() - startAt;
     const pct = Math.min(100, Math.round((elapsed / durationMs) * 100));
     options.onProgress?.(pct);
@@ -234,7 +248,7 @@ export async function recordVillageVideoClip(
       }
 
       const blob = new Blob(chunks, { type: chosen.mimeType });
-      const filename = `gitvillage-${sanitizeFileSlug(graph)}-${options.labelSuffix}.${chosen.ext}`;
+      const filename = `gitvillage-${sanitizeFileSlug(graph, options.heatmap)}-${options.labelSuffix}.${chosen.ext}`;
       triggerBlobDownload(blob, filename);
       resolve({ filename, ext: chosen.ext });
     };

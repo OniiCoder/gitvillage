@@ -358,6 +358,11 @@ export function SfIconSprite() {
           strokeLinejoin="round"
         />
       </symbol>
+      <symbol id="sf-heatmap" viewBox="0 0 20 20">
+        <rect x="2.8" y="10.5" width="3.4" height="6.2" rx="0.9" fill="none" stroke="currentColor" strokeWidth="1.55" />
+        <rect x="8.3" y="4.2" width="3.4" height="12.5" rx="0.9" fill="none" stroke="currentColor" strokeWidth="1.55" />
+        <rect x="13.8" y="7.5" width="3.4" height="9.2" rx="0.9" fill="none" stroke="currentColor" strokeWidth="1.55" />
+      </symbol>
     </svg>
   );
 }

@@ -5,6 +5,8 @@ import { BottomFilterDock } from '@/Components/BottomFilterDock';
 import { CensusPopover } from '@/Components/CensusPopover';
 import { DiffViewerDialog, type DiffModalPayload } from '@/Components/DiffViewerDialog';
 import { FieldGuideDialog } from '@/Components/FieldGuideDialog';
+import { HeatmapDock } from '@/Components/HeatmapDock';
+import { HeatmapPopover } from '@/Components/HeatmapPopover';
 import { InspectorSheet } from '@/Components/InspectorSheet';
 import { extractDroppedRepoSource, LocalRepoDialog } from '@/Components/LocalRepoDialog';
 import { PresetsPopover } from '@/Components/PresetsPopover';
@@ -27,6 +29,8 @@ function createInitialSnapshot(): VillageEngineSnapshot {
   const clanMap = buildContributorClanMap(demo.commitsBySha.values());
   return {
     graph: demo,
+    heatmap: null,
+    heatmapTheme: 'emerald',
     clans: [...clanMap.values()],
     clanMap,
     villagerCount: [...demo.commitsBySha.values()].length,
@@ -70,6 +74,9 @@ export default function VillageIndex({
   initialRepo,
   initialLocal,
   initialBranch,
+  initialHeatmapUser,
+  initialHeatmapYear,
+  initialHeatmapTheme,
   directorMode,
   localServerEnabled,
   nativeFinderSupported,
@@ -87,7 +94,9 @@ export default function VillageIndex({
   const toastTimerRef = useRef<number | undefined>(undefined);
 
   const [snapshot, setSnapshot] = useState<VillageEngineSnapshot>(createInitialSnapshot);
-  const [repoInput, setRepoInput] = useState<string>(initialRepo ?? initialLocal ?? '');
+  const [repoInput, setRepoInput] = useState<string>(
+    initialHeatmapUser ? `@${initialHeatmapUser}` : (initialRepo ?? initialLocal ?? ''),
+  );
   const [githubToken, setGithubToken] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
   const [diffSelectedFilename, setDiffSelectedFilename] = useState<string | null>(null);
@@ -137,7 +146,9 @@ export default function VillageIndex({
       getGithubToken: () => githubTokenRef.current,
       onStateChange: (next) => {
         setSnapshot(next);
-        if (next.graph.isDemo) {
+        if (next.heatmap) {
+          setRepoInput(`@${next.heatmap.username}`);
+        } else if (next.graph.isDemo) {
           setRepoInput('');
         } else if (next.graph.isLocal) {
           setRepoInput(next.graph.localPath ?? next.graph.repo);
@@ -146,8 +157,30 @@ export default function VillageIndex({
         }
       },
       onToast: showToast,
-      onSyncUrl: ({ repo, local, branch }) => {
+      onSyncUrl: ({ repo, local, branch, heatmapUser, heatmapYear, heatmapTheme }) => {
         const url = new URL(window.location.href);
+        if (heatmapUser) {
+          url.pathname = `/u/${heatmapUser}`;
+          url.searchParams.delete('repo');
+          url.searchParams.delete('local');
+          url.searchParams.delete('branch');
+          url.searchParams.delete('user');
+          if (heatmapYear) {
+            url.searchParams.set('year', String(heatmapYear));
+          } else {
+            url.searchParams.delete('year');
+          }
+          if (heatmapTheme) {
+            url.searchParams.set('theme', heatmapTheme);
+          } else {
+            url.searchParams.delete('theme');
+          }
+          window.history.replaceState({}, '', url);
+          return;
+        }
+        url.searchParams.delete('year');
+        url.searchParams.delete('theme');
+        url.searchParams.delete('user');
         if (repo) {
           url.pathname = `/gh/${repo}`;
           url.searchParams.delete('repo');
@@ -174,7 +207,13 @@ export default function VillageIndex({
     engineRef.current = engine;
 
     const initialConflictParam = new URLSearchParams(window.location.search).get('conflict');
-    if (initialConflictParam === '1' || initialConflictParam === 'true') {
+    if (initialHeatmapUser) {
+      void engine.loadUserHeatmap(initialHeatmapUser, {
+        year: initialHeatmapYear ?? null,
+        theme: initialHeatmapTheme ?? null,
+        updateUrl: false,
+      });
+    } else if (initialConflictParam === '1' || initialConflictParam === 'true') {
       engine.loadConflictDemo(false);
     } else if (localServerEnabled && initialLocal) {
       void engine.loadLocalRepo(initialLocal, false, initialBranch ?? undefined);
@@ -219,6 +258,25 @@ export default function VillageIndex({
       document.getElementById('presets-popover')?.showPopover?.();
       return;
     }
+
+    // Detect `@username`, `https://github.com/username` (single path segment), or bare GitHub handle
+    const ghProfileMatch = val.match(/^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9-]+)\/?$/i);
+    if (val.startsWith('@') || ghProfileMatch) {
+      const handle = ghProfileMatch ? ghProfileMatch[1] : val.slice(1);
+      void engineRef.current?.loadUserHeatmap(handle, { updateUrl: true });
+      return;
+    }
+    if (
+      val.toLowerCase() !== 'demo' &&
+      !val.includes('/') &&
+      !val.includes('\\') &&
+      !val.includes('.') &&
+      /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(val)
+    ) {
+      void engineRef.current?.loadUserHeatmap(val, { updateUrl: true });
+      return;
+    }
+
     void engineRef.current?.loadRepoBySpec(val, true);
   };
 
@@ -231,9 +289,17 @@ export default function VillageIndex({
     const engine = engineRef.current;
     if (!engine) return;
     try {
-      const filename = await capturePostcardPng(engine.getCanvasElement(), snapshot.graph);
+      const filename = await capturePostcardPng(
+        engine.getCanvasElement(),
+        snapshot.graph,
+        snapshot.heatmap,
+      );
       sound.playPop(680);
-      trackEvent('postcard_captured', describeRepoForAnalytics(snapshot.graph));
+      if (snapshot.heatmap) {
+        trackEvent('heatmap_shared', { channel: 'postcard', theme: snapshot.heatmapTheme });
+      } else {
+        trackEvent('postcard_captured', describeRepoForAnalytics(snapshot.graph));
+      }
       showToast(`Saved ${filename}`);
     } catch (err) {
       showToast(err instanceof Error ? err.message : 'Postcard capture failed', true);
@@ -249,8 +315,11 @@ export default function VillageIndex({
     recordingAbortRef.current = controller;
 
     const durationMs = mode === 'turntable' ? 6000 : engine.getTimeLapseDurationMs();
-    const label =
-      mode === 'turntable'
+    const label = snapshot.heatmap
+      ? mode === 'turntable'
+        ? 'Recording 6s 3D Skyline Orbit…'
+        : 'Recording 6s 3D Wave + Orbit…'
+      : mode === 'turntable'
         ? 'Recording 6s 3D Turntable…'
         : 'Recording Time-Lapse Growth…';
 
@@ -265,18 +334,23 @@ export default function VillageIndex({
     try {
       const result = await recordVillageVideoClip(engine.getCanvasElement(), snapshot.graph, {
         durationMs,
-        labelSuffix: mode,
+        labelSuffix: snapshot.heatmap && mode === 'timelapse' ? 'wave-orbit' : mode,
+        heatmap: snapshot.heatmap,
         signal: controller.signal,
         onProgress: (progress) => {
           setRecordingState((prev) => (prev.active ? { ...prev, progress } : prev));
         },
       });
       sound.playRepoLoaded();
-      trackEvent('video_clip_recorded', {
-        mode,
-        format: result.ext,
-        ...describeRepoForAnalytics(snapshot.graph),
-      });
+      if (snapshot.heatmap) {
+        trackEvent('heatmap_shared', { channel: 'video', theme: snapshot.heatmapTheme });
+      } else {
+        trackEvent('video_clip_recorded', {
+          mode,
+          format: result.ext,
+          ...describeRepoForAnalytics(snapshot.graph),
+        });
+      }
       showToast(`Saved ${result.filename}`);
       await closeTopLayerDialog(shareDialogRef.current);
     } catch (err) {
@@ -335,7 +409,9 @@ export default function VillageIndex({
 
   const diffModalPayload: DiffModalPayload | null = (() => {
     const sel = snapshot.selection;
-    if (!sel || sel.kind === 'stash' || sel.kind === 'landmark') return null;
+    if (!sel || sel.kind === 'stash' || sel.kind === 'landmark' || sel.kind === 'heatmap_day') {
+      return null;
+    }
     if (sel.kind === 'commit') {
       const c = sel.commit;
       return {
@@ -379,11 +455,13 @@ export default function VillageIndex({
     };
   })();
 
-  const pageTitle = snapshot.graph.isDemo
-    ? 'Sky Village'
-    : snapshot.graph.isLocal
-      ? `${snapshot.graph.repo} (Local)`
-      : `${snapshot.graph.owner}/${snapshot.graph.repo}`;
+  const pageTitle = snapshot.heatmap
+    ? `@${snapshot.heatmap.username} · 3D GitHub Contribution Skyline`
+    : snapshot.graph.isDemo
+      ? 'Sky Village'
+      : snapshot.graph.isLocal
+        ? `${snapshot.graph.repo} (Local)`
+        : `${snapshot.graph.owner}/${snapshot.graph.repo}`;
 
   return (
     <>
@@ -413,6 +491,7 @@ export default function VillageIndex({
 
       <SpatialTopbar
         graph={snapshot.graph}
+        heatmap={snapshot.heatmap}
         villagerCount={snapshot.villagerCount}
         gateVisitorsCount={snapshot.gateVisitorsCount}
         clans={snapshot.clans}
@@ -480,6 +559,19 @@ export default function VillageIndex({
         onSelectCommit={(sha) => engineRef.current?.focusVillagerBySha(sha)}
       />
 
+      <HeatmapPopover
+        activeHeatmap={snapshot.heatmap}
+        heatmapTheme={snapshot.heatmapTheme}
+        isLoading={snapshot.isLoading}
+        onGenerateHeatmap={({ username, year, theme }) =>
+          void engineRef.current?.loadUserHeatmap(username, { year, theme, updateUrl: true })
+        }
+        onChangeTheme={(theme) => engineRef.current?.setHeatmapTheme(theme)}
+        onSnapPostcard={() => void handleSnapPostcard()}
+        onRecordWaveVideo={() => void runVideoCapture('timelapse')}
+        onOpenShareStudio={openShareStudio}
+      />
+
       <BisectBar
         bisect={snapshot.bisect}
         graph={snapshot.graph}
@@ -495,28 +587,42 @@ export default function VillageIndex({
         onStop={() => engineRef.current?.stopTimeLapse()}
       />
 
-      <BottomFilterDock
-        activeFilter={snapshot.activeFilter}
-        isLocal={Boolean(snapshot.graph.isLocal)}
-        hasConflict={Boolean(snapshot.graph.mergeConflict?.active)}
-        gateVisitorsCount={snapshot.gateVisitorsCount}
-        timeLapseActive={snapshot.timeLapse.active}
-        onSelectFilter={(f) => engineRef.current?.setFilter(f)}
-        onFlyToGate={() =>
-          snapshot.graph.mergeConflict?.active
-            ? engineRef.current?.flyToConflictZone(true)
-            : engineRef.current?.flyToGate(true)
-        }
-        onStartTimeLapse={() => {
-          if (snapshot.timeLapse.active) {
-            engineRef.current?.stopTimeLapse();
-          } else {
-            engineRef.current?.startTimeLapse();
+      {snapshot.heatmap ? (
+        <HeatmapDock
+          heatmap={snapshot.heatmap}
+          theme={snapshot.heatmapTheme}
+          isRecording={recordingState.active}
+          onSelectTheme={(theme) => engineRef.current?.setHeatmapTheme(theme)}
+          onReplayWave={() => engineRef.current?.replayHeatmapWave()}
+          onSnapPostcard={() => void handleSnapPostcard()}
+          onRecordWaveVideo={() => void runVideoCapture('timelapse')}
+          onOpenShareStudio={openShareStudio}
+          onExitHeatmap={() => engineRef.current?.exitHeatmapMode()}
+        />
+      ) : (
+        <BottomFilterDock
+          activeFilter={snapshot.activeFilter}
+          isLocal={Boolean(snapshot.graph.isLocal)}
+          hasConflict={Boolean(snapshot.graph.mergeConflict?.active)}
+          gateVisitorsCount={snapshot.gateVisitorsCount}
+          timeLapseActive={snapshot.timeLapse.active}
+          onSelectFilter={(f) => engineRef.current?.setFilter(f)}
+          onFlyToGate={() =>
+            snapshot.graph.mergeConflict?.active
+              ? engineRef.current?.flyToConflictZone(true)
+              : engineRef.current?.flyToGate(true)
           }
-        }}
-        onRandomVillager={() => engineRef.current?.focusRandomVillager()}
-        onResetOverview={() => engineRef.current?.flyToOverview()}
-      />
+          onStartTimeLapse={() => {
+            if (snapshot.timeLapse.active) {
+              engineRef.current?.stopTimeLapse();
+            } else {
+              engineRef.current?.startTimeLapse();
+            }
+          }}
+          onRandomVillager={() => engineRef.current?.focusRandomVillager()}
+          onResetOverview={() => engineRef.current?.flyToOverview()}
+        />
+      )}
 
       {!directorMode && (
         <footer className="creator-badge">
@@ -570,6 +676,8 @@ export default function VillageIndex({
       <ShareStudioDialog
         dialogRef={shareDialogRef}
         graph={snapshot.graph}
+        heatmap={snapshot.heatmap}
+        heatmapTheme={snapshot.heatmapTheme}
         isRecording={recordingState.active}
         recordingProgress={recordingState.progress}
         recordingLabel={recordingState.label}

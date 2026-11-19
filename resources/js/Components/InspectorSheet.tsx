@@ -452,6 +452,70 @@ export function InspectorSheet({
     );
   }
 
+  if (selection.kind === 'heatmap_day') {
+    const { day, heatmap } = selection;
+    const formattedDate = new Date(`${day.date}T12:00:00Z`).toLocaleDateString(undefined, {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    });
+    const isPeak = heatmap.peakDay?.date === day.date && day.count > 0;
+    const pctOfPeak =
+      heatmap.maxDailyCount > 0 ? Math.round((day.count / heatmap.maxDailyCount) * 100) : 0;
+
+    return (
+      <aside
+        id="inspector-card"
+        className="apple-sheet inspector-card"
+        aria-label="Contribution Day Details"
+      >
+        <div className="inspector-top">
+          <div className="role-chip-row">
+            <span className="meta-pill">
+              {isPeak ? '🏆 Peak Contribution Tower' : `🟩 Intensity Level ${day.level}/4`}
+            </span>
+            <span className="meta-pill meta-pill-branch">@{heatmap.username}</span>
+          </div>
+          <button
+            type="button"
+            id="ins-close-btn"
+            className="circle-close-btn"
+            aria-label="Close inspector"
+            onClick={onClose}
+          >
+            <SfIcon name="sf-close" size={12} />
+          </button>
+        </div>
+
+        <h2 id="ins-subject" className="ins-subject">
+          {day.count === 0
+            ? 'Rest Day · 0 contributions'
+            : `${day.count} contribution${day.count === 1 ? '' : 's'}`}
+        </h2>
+        <p id="ins-quirk" className="ins-quirk">
+          {formattedDate} · Week {day.weekIndex + 1} of {heatmap.weeks.length}
+        </p>
+
+        <div className="inset-group ins-conflict-card is-resolved">
+          <div className="ins-conflict-copy">
+            <strong>
+              {day.count === 0
+                ? 'Quiet courtyard tile on the skyline'
+                : isPeak
+                  ? `Highest tower of ${heatmap.periodLabel} (${day.count} in one day!)`
+                  : `${pctOfPeak}% of @${heatmap.username}'s ${heatmap.maxDailyCount}/day peak tower`}
+            </strong>
+            <span>
+              {heatmap.totalContributions.toLocaleString()} total contributions ·{' '}
+              {heatmap.longestStreak}-day longest streak
+            </span>
+          </div>
+        </div>
+      </aside>
+    );
+  }
+
   const commit = selection.commit;
   const role = getRoleMeta(commit.kind);
   const archetype = computeCommitArchetype(commit);

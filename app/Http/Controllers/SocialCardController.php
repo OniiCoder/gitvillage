@@ -2,13 +2,35 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\GitHubHeatmapService;
 use GdImage;
+use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 
 class SocialCardController extends Controller
 {
+    public function userHeatmapOg(Request $request, string $username, GitHubHeatmapService $service): Response
+    {
+        $safeUser = $service->normalizeUsername($username) ?: 'OniiCoder';
+        $yearParam = $request->query('year');
+        $year = is_numeric($yearParam) ? (int) $yearParam : null;
+        $cacheKey = 'gitvillage_og_heatmap_v1_'.strtolower($safeUser).'_'.($year ?? 'rolling');
+
+        $png = Cache::remember($cacheKey, now()->addMinutes(30), function () use ($safeUser, $year, $service): string {
+            $data = $service->fetchHeatmap($safeUser, $year);
+            $host = parse_url(config('app.url', 'https://gitvillage.on-forge.com'), PHP_URL_HOST) ?: 'gitvillage.on-forge.com';
+
+            return $this->renderHeatmapOgPng($safeUser, $data, "{$host}/u/{$safeUser}");
+        });
+
+        return response($png, 200, [
+            'Content-Type' => 'image/png',
+            'Cache-Control' => 'public, max-age=1800, s-maxage=1800',
+        ]);
+    }
+
     public function defaultOg(): Response
     {
         $png = Cache::remember('gitvillage_og_default_v1', now()->addHours(6), function (): string {
@@ -237,6 +259,205 @@ class SocialCardController extends Controller
         imagedestroy($im);
 
         return $bytes;
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $data
+     */
+    private function renderHeatmapOgPng(string $username, ?array $data, string $footerUrl): string
+    {
+        $w = 1200;
+        $h = 630;
+        /** @var GdImage $im */
+        $im = imagecreatetruecolor($w, $h);
+        imageSaveAlpha($im, true);
+        imageAlphaBlending($im, true);
+        if (function_exists('imageantialias')) {
+            imageantialias($im, true);
+        }
+
+        for ($y = 0; $y < $h; $y++) {
+            $t = $y / ($h - 1);
+            $r = (int) round(7 + $t * 15);
+            $g = (int) round(15 + $t * 36);
+            $b = (int) round(28 + $t * 58);
+            $col = imagecolorallocate($im, $r, $g, $b);
+            imageline($im, 0, $y, $w, $y, $col);
+        }
+
+        $glowEmerald = imagecolorallocatealpha($im, 38, 166, 65, 108);
+        $glowCyan = imagecolorallocatealpha($im, 56, 189, 248, 114);
+        imagefilledellipse($im, 935, 330, 520, 400, $glowEmerald);
+        imagefilledellipse($im, 960, 260, 380, 280, $glowCyan);
+
+        $this->drawIsometricHeatmapSkyline($im, $data['weeks'] ?? []);
+
+        $cardBg = imagecolorallocate($im, 13, 21, 38);
+        $cardBorder = imagecolorallocatealpha($im, 255, 255, 255, 96);
+        $this->drawRoundedRect($im, 50, 52, 686, 578, 28, $cardBg, $cardBorder);
+
+        $fontBold = $this->resolveFont(bold: true);
+        $fontRegular = $this->resolveFont(bold: false);
+        $fontMono = $this->resolveFont(bold: false, mono: true);
+
+        $crestBg = imagecolorallocate($im, 38, 166, 65);
+        $white = imagecolorallocate($im, 248, 250, 252);
+        $muted = imagecolorallocate($im, 168, 182, 206);
+        $emerald = imagecolorallocate($im, 57, 211, 83);
+        $amber = imagecolorallocate($im, 251, 191, 36);
+        $cyan = imagecolorallocate($im, 103, 232, 249);
+        $pillBg = imagecolorallocate($im, 24, 38, 62);
+        $pillBorder = imagecolorallocatealpha($im, 255, 255, 255, 105);
+
+        imagefilledellipse($im, 106, 114, 44, 44, $crestBg);
+        imagefilledrectangle($im, 95, 108, 103, 123, $white);
+        imagefilledrectangle($im, 105, 99, 113, 123, $white);
+        imagefilledrectangle($im, 115, 104, 121, 123, $white);
+
+        $this->drawText($im, 20, 140, 122, $white, $fontBold, 'GitVillage');
+        $this->drawText($im, 13, 280, 120, $emerald, $fontMono, '· 3D GitHub Contribution Skyline');
+
+        $handleTitle = '@'.($data['username'] ?? $username);
+        $displayTitle = mb_strlen($handleTitle) > 22 ? mb_substr($handleTitle, 0, 21).'…' : $handleTitle;
+        $titleSize = mb_strlen($displayTitle) > 16 ? 33 : 40;
+        $this->drawText($im, $titleSize, 88, 214, $white, $fontBold, $displayTitle);
+
+        $total = isset($data['totalContributions']) ? (int) $data['totalContributions'] : null;
+        $streak = isset($data['longestStreak']) ? (int) $data['longestStreak'] : null;
+        $peakCount = isset($data['maxDailyCount']) ? (int) $data['maxDailyCount'] : null;
+        $period = (string) ($data['periodLabel'] ?? 'Last 12 Months');
+
+        $subtitle = $total !== null
+            ? number_format($total)." contributions in {$period} — rendered as a living 3D floating-island skyline."
+            : "Explore {$handleTitle}'s GitHub contribution heatmap as an interactive 3D floating island.";
+
+        $lines = $this->wrapText($subtitle, 44, 3);
+        $lineY = 274;
+        foreach ($lines as $line) {
+            $this->drawText($im, 17, 88, $lineY, $muted, $fontRegular, $line);
+            $lineY += 34;
+        }
+
+        $pillX = 88;
+        $pillY = 415;
+
+        if ($total !== null) {
+            $totLabel = number_format($total).' total';
+            $tw = max(148, strlen($totLabel) * 11 + 48);
+            $this->drawRoundedRect($im, $pillX, $pillY, $pillX + $tw, $pillY + 40, 20, $pillBg, null);
+            imagefilledellipse($im, $pillX + 18, $pillY + 20, 9, 9, $emerald);
+            $this->drawText($im, 13, $pillX + 32, $pillY + 26, $emerald, $fontMono, $totLabel);
+            $pillX += $tw + 12;
+        }
+
+        if ($streak !== null && $streak > 0) {
+            $stLabel = "Streak: {$streak}d";
+            $sw = max(130, strlen($stLabel) * 10 + 36);
+            $this->drawRoundedRect($im, $pillX, $pillY, $pillX + $sw, $pillY + 40, 20, $pillBg, null);
+            $this->drawText($im, 13, $pillX + 18, $pillY + 26, $amber, $fontBold, $stLabel);
+            $pillX += $sw + 12;
+        }
+
+        if ($peakCount !== null && $peakCount > 0 && $pillX < 540) {
+            $pkLabel = "Peak: {$peakCount}/day";
+            $pw = min(656 - $pillX, max(126, strlen($pkLabel) * 10 + 34));
+            $this->drawRoundedRect($im, $pillX, $pillY, $pillX + $pw, $pillY + 40, 20, $pillBg, null);
+            $this->drawText($im, 13, $pillX + 18, $pillY + 26, $white, $fontRegular, $pkLabel);
+        }
+
+        $shortFooter = mb_strlen($footerUrl) > 48 ? mb_substr($footerUrl, 0, 47).'…' : $footerUrl;
+        $this->drawText($im, 14, 88, 532, $cyan, $fontMono, $shortFooter);
+
+        ob_start();
+        imagepng($im, null, 7);
+        $bytes = (string) ob_get_clean();
+        imagedestroy($im);
+
+        return $bytes;
+    }
+
+    /**
+     * Draw an isometric 3D tower skyline on the right half of the OG card using actual week levels.
+     *
+     * @param  array<int, array<string, mixed>>  $weeks
+     */
+    private function drawIsometricHeatmapSkyline(GdImage $im, array $weeks): void
+    {
+        $rockDark = imagecolorallocate($im, 22, 34, 53);
+        $rockDeep = imagecolorallocate($im, 12, 20, 36);
+        $deckTop = imagecolorallocate($im, 20, 48, 42);
+
+        // Floating island deck polygon on right side (x: 710..1176)
+        imagefilledpolygon($im, [725, 365, 955, 255, 1172, 355, 942, 470], $deckTop);
+        imagefilledpolygon($im, [725, 365, 942, 470, 942, 536, 775, 442], $rockDark);
+        imagefilledpolygon($im, [942, 470, 1172, 355, 1122, 445, 942, 536], $rockDeep);
+
+        // Slice most recent 16 weeks (or synthesize subtle demo grid if unavailable)
+        $slice = array_slice($weeks, -16);
+        if ($slice === []) {
+            for ($c = 0; $c < 16; $c++) {
+                $days = [];
+                for ($r = 0; $r < 7; $r++) {
+                    $lv = (($c * 3 + $r * 5) % 7 === 0) ? 4 : ((($c + $r) % 3 === 0) ? 2 : (($c % 2 === 0) ? 1 : 0));
+                    $days[] = ['weekday' => $r, 'level' => $lv, 'count' => $lv * 4];
+                }
+                $slice[] = ['days' => $days];
+            }
+        }
+
+        $palettes = [
+            0 => [imagecolorallocate($im, 30, 58, 52), imagecolorallocate($im, 21, 42, 38), imagecolorallocate($im, 16, 33, 30)],
+            1 => [imagecolorallocate($im, 14, 98, 53), imagecolorallocate($im, 10, 74, 40), imagecolorallocate($im, 8, 56, 31)],
+            2 => [imagecolorallocate($im, 26, 148, 72), imagecolorallocate($im, 18, 112, 54), imagecolorallocate($im, 13, 86, 42)],
+            3 => [imagecolorallocate($im, 46, 196, 92), imagecolorallocate($im, 33, 152, 70), imagecolorallocate($im, 24, 118, 54)],
+            4 => [imagecolorallocate($im, 86, 242, 124), imagecolorallocate($im, 52, 199, 89), imagecolorallocate($im, 36, 156, 68)],
+        ];
+
+        $originX = 952.0;
+        $originY = 276.0;
+        $colCount = count($slice);
+
+        // Back-to-front painter's order (`col + row` ascending)
+        for ($c = 0; $c < $colCount; $c++) {
+            $byDay = [];
+            foreach (($slice[$c]['days'] ?? []) as $d) {
+                $byDay[(int) ($d['weekday'] ?? 0)] = $d;
+            }
+            for ($r = 0; $r < 7; $r++) {
+                $cell = $byDay[$r] ?? ['level' => 0, 'count' => 0];
+                $lv = max(0, min(4, (int) ($cell['level'] ?? 0)));
+                $cnt = (int) ($cell['count'] ?? 0);
+                $barH = $lv === 0 ? 4 : (12 + $lv * 18 + min(26, $cnt));
+
+                $cx = (int) round($originX + ($c - 7.5) * 12.2 - ($r - 3.0) * 13.5);
+                $cy = (int) round($originY + ($c - 7.5) * 5.8 + ($r - 3.0) * 6.8 + 75);
+                $hw = 8;
+                $hh = 4;
+
+                [$topCol, $leftCol, $rightCol] = $palettes[$lv];
+                // Left face
+                imagefilledpolygon($im, [
+                    $cx - $hw, $cy - $barH,
+                    $cx, $cy + $hh - $barH,
+                    $cx, $cy + $hh,
+                    $cx - $hw, $cy,
+                ], $leftCol);
+                // Right face
+                imagefilledpolygon($im, [
+                    $cx, $cy + $hh - $barH,
+                    $cx + $hw, $cy - $barH,
+                    $cx + $hw, $cy,
+                    $cx, $cy + $hh,
+                ], $rightCol);
+                // Top diamond face
+                imagefilledpolygon($im, [
+                    $cx, $cy - $hh - $barH,
+                    $cx + $hw, $cy - $barH,
+                    $cx, $cy + $hh - $barH,
+                    $cx - $hw, $cy - $barH,
+                ], $topCol);
+            }
+        }
     }
 
     private function drawFloatingArchipelagoArtwork(GdImage $im): void

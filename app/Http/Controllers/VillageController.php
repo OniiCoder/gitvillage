@@ -13,14 +13,25 @@ class VillageController extends Controller
         $repoQuery = $request->query('repo');
         $localQuery = app()->isLocal() ? $request->query('local') : null;
         $branchQuery = $request->query('branch');
+        $userQuery = $request->query('user');
+        $yearQuery = $request->query('year');
+        $themeQuery = $request->query('theme');
         $initialRepo = is_string($repoQuery) && $repoQuery !== '' ? $repoQuery : null;
+        $initialHeatmapUser = is_string($userQuery) && preg_match('/^[A-Za-z0-9-]+$/', trim($userQuery, '@ '))
+            ? trim($userQuery, '@ ')
+            : null;
 
-        $ogMeta = $this->buildOgMeta($request, $initialRepo);
+        $ogMeta = $initialHeatmapUser !== null
+            ? $this->buildHeatmapOgMeta($initialHeatmapUser)
+            : $this->buildOgMeta($request, $initialRepo);
 
         return Inertia::render('Village/Index', [
             'initialRepo' => $initialRepo,
             'initialLocal' => is_string($localQuery) && $localQuery !== '' ? $localQuery : null,
             'initialBranch' => is_string($branchQuery) && $branchQuery !== '' ? $branchQuery : null,
+            'initialHeatmapUser' => $initialHeatmapUser,
+            'initialHeatmapYear' => is_numeric($yearQuery) ? (int) $yearQuery : null,
+            'initialHeatmapTheme' => is_string($themeQuery) ? $themeQuery : null,
             'directorMode' => $request->has('director'),
             'localServerEnabled' => app()->isLocal(),
             'nativeFinderSupported' => app()->isLocal() && PHP_OS_FAMILY === 'Darwin',
@@ -38,11 +49,48 @@ class VillageController extends Controller
             'initialRepo' => $slug,
             'initialLocal' => null,
             'initialBranch' => is_string($branchQuery) && $branchQuery !== '' ? $branchQuery : null,
+            'initialHeatmapUser' => null,
+            'initialHeatmapYear' => null,
+            'initialHeatmapTheme' => null,
             'directorMode' => $request->has('director'),
             'localServerEnabled' => app()->isLocal(),
             'nativeFinderSupported' => app()->isLocal() && PHP_OS_FAMILY === 'Darwin',
             'showcaseRepos' => $this->showcaseRepos(),
         ])->withViewData(['ogMeta' => $ogMeta]);
+    }
+
+    public function heatmap(Request $request, string $username): Response
+    {
+        $safeUser = preg_replace('/[^A-Za-z0-9-]/', '', $username) ?: 'OniiCoder';
+        $yearQuery = $request->query('year');
+        $themeQuery = $request->query('theme');
+        $ogMeta = $this->buildHeatmapOgMeta($safeUser);
+
+        return Inertia::render('Village/Index', [
+            'initialRepo' => null,
+            'initialLocal' => null,
+            'initialBranch' => null,
+            'initialHeatmapUser' => $safeUser,
+            'initialHeatmapYear' => is_numeric($yearQuery) ? (int) $yearQuery : null,
+            'initialHeatmapTheme' => is_string($themeQuery) ? $themeQuery : null,
+            'directorMode' => $request->has('director'),
+            'localServerEnabled' => app()->isLocal(),
+            'nativeFinderSupported' => app()->isLocal() && PHP_OS_FAMILY === 'Darwin',
+            'showcaseRepos' => $this->showcaseRepos(),
+        ])->withViewData(['ogMeta' => $ogMeta]);
+    }
+
+    /**
+     * @return array{title: string, description: string, url: string, image: string}
+     */
+    private function buildHeatmapOgMeta(string $username): array
+    {
+        return [
+            'title' => "@{$username} · 3D GitHub Contribution Skyline | GitVillage",
+            'description' => "Explore @{$username}'s GitHub contribution heatmap as a living 3D floating-island skyline — streaks, peak days, and interactive towers.",
+            'url' => url("/u/{$username}"),
+            'image' => route('og.heatmap', ['username' => $username]),
+        ];
     }
 
     /**
