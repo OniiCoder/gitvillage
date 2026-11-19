@@ -130,6 +130,18 @@ export type AnalyticsEventMap = {
     channel: 'copy_link' | 'x_intent' | 'postcard' | 'video';
     theme: string;
   };
+  academy_entered: {
+    chapter: number;
+    source: 'cta' | 'presets' | 'url';
+  };
+  academy_step_completed: {
+    chapter: number;
+    step_index: number;
+    via: 'button' | 'cli';
+  };
+  academy_chapter_completed: {
+    chapter: number;
+  };
 };
 
 /**

@@ -8,6 +8,14 @@ import {
 } from '@/lib/browserGitReader';
 import { createConflictDemoRepoGraph, createDemoRepoGraph } from '@/lib/demoRepo';
 import {
+  ACADEMY_CHAPTERS,
+  type AcademyFocusHint,
+  type AcademyProgressSnapshot,
+  type AcademySandboxState,
+  compileAcademyGraph,
+  executeFreeformGitCommand,
+} from '@/lib/gitAcademy';
+import {
   fetchRepoCiWeather,
   hydrateCommitDetail,
   loadGitHubRepoVillage,
@@ -65,6 +73,7 @@ export interface VillageEngineSnapshot {
   graph: RepoVillageGraph;
   heatmap: GitHubHeatmapData | null;
   heatmapTheme: HeatmapTheme;
+  academy: AcademyProgressSnapshot;
   clans: ContributorClanProfile[];
   clanMap: Map<string, ContributorClanProfile>;
   villagerCount: number;
@@ -96,6 +105,8 @@ export interface VillageEngineCallbacks {
     heatmapUser?: string | null;
     heatmapYear?: number | null;
     heatmapTheme?: HeatmapTheme | null;
+    learn?: boolean;
+    chapter?: number | null;
   }) => void;
   onRequestLocalModal: () => void;
 }
@@ -154,6 +165,13 @@ export class VillageEngine {
     elapsed: 0,
     duration: 1.75,
   };
+
+  private academyActive = false;
+  private academyChapter = 1;
+  private academyStepIndex = 0;
+  private academyCompleted = new Set<number>();
+  private academySandbox: AcademySandboxState | null = null;
+  private preAcademyGraph: RepoVillageGraph | null = null;
 
   private followVillager = false;
   private activeFilter = 'all';
@@ -388,10 +406,24 @@ export class VillageEngine {
       };
     }
 
+    const activeSpec =
+      ACADEMY_CHAPTERS.find((ch) => ch.number === this.academyChapter) ?? ACADEMY_CHAPTERS[0];
+    const chapterDone = this.academyStepIndex >= activeSpec.steps.length;
+
     this.cb.onStateChange({
       graph: this.activeGraph,
       heatmap: this.activeHeatmap,
       heatmapTheme: this.heatmapTheme,
+      academy: {
+        active: this.academyActive,
+        chapterNumber: this.academyChapter,
+        stepIndex: this.academyStepIndex,
+        completedChapters: [...this.academyCompleted].toSorted((a, b) => a - b),
+        chapterDone,
+        initialized: this.academySandbox?.initialized ?? true,
+        currentBranch: this.academySandbox?.currentBranch ?? 'main',
+        terminal: this.academySandbox?.terminal ?? [],
+      },
       clans: [...this.clanMap.values()],
       clanMap: this.clanMap,
       villagerCount: this.villagers.filter((v) => !v.commit.isGhost).length,
@@ -1104,6 +1136,8 @@ export class VillageEngine {
     const cleanUser = username.trim().replace(/^@/, '');
     if (!cleanUser) return;
 
+    this.academyActive = false;
+    this.academySandbox = null;
     this.currentLoadController?.abort();
     const controller = new AbortController();
     this.currentLoadController = controller;
@@ -1258,6 +1292,217 @@ export class VillageEngine {
       heatmapTheme: null,
     });
     this.emit();
+  }
+
+  // ---------- Interactive 3D Git Academy (`/learn`) ----------
+  public startAcademy(
+    chapterNumber = 1,
+    source: 'cta' | 'presets' | 'url' = 'cta',
+    updateUrl = true,
+  ): void {
+    this.currentLoadController?.abort();
+    if (!this.academyActive) {
+      this.preAcademyGraph = this.activeGraph;
+    }
+
+    const spec =
+      ACADEMY_CHAPTERS.find((c) => c.number === chapterNumber) ?? ACADEMY_CHAPTERS[0];
+    this.academyActive = true;
+    this.academyChapter = spec.number;
+    this.academyStepIndex = 0;
+    this.academySandbox = spec.createInitialState();
+
+    this.applyAcademyStateToWorld(spec.focusOnEnter);
+    sound.playPop(587.33);
+    trackEvent('academy_entered', {
+      chapter: spec.number,
+      source,
+    });
+
+    if (updateUrl) {
+      this.cb.onSyncUrl({
+        repo: null,
+        local: null,
+        branch: null,
+        heatmapUser: null,
+        heatmapYear: null,
+        heatmapTheme: null,
+        learn: true,
+        chapter: spec.number > 1 ? spec.number : null,
+      });
+    }
+    this.emit();
+  }
+
+  public resetAcademyChapter(): void {
+    if (!this.academyActive) return;
+    const spec =
+      ACADEMY_CHAPTERS.find((c) => c.number === this.academyChapter) ?? ACADEMY_CHAPTERS[0];
+    this.academyStepIndex = 0;
+    this.academySandbox = spec.createInitialState();
+    this.applyAcademyStateToWorld(spec.focusOnEnter);
+    sound.playPop(493.88);
+    this.emit();
+  }
+
+  public runAcademyGuidedStep(): void {
+    if (!this.academyActive || !this.academySandbox) return;
+    const spec =
+      ACADEMY_CHAPTERS.find((c) => c.number === this.academyChapter) ?? ACADEMY_CHAPTERS[0];
+    const step = spec.steps[this.academyStepIndex];
+    if (!step) return;
+
+    const { next, output } = step.run(this.academySandbox);
+    this.academySandbox = next;
+    const completedIdx = this.academyStepIndex;
+    this.academyStepIndex++;
+
+    if (this.academyStepIndex >= spec.steps.length) {
+      this.academyCompleted.add(spec.number);
+      sound.playRepoLoaded();
+      trackEvent('academy_chapter_completed', { chapter: spec.number });
+    } else {
+      sound.playPop(659.25);
+    }
+
+    trackEvent('academy_step_completed', {
+      chapter: spec.number,
+      step_index: completedIdx,
+      via: 'button',
+    });
+
+    this.applyAcademyStateToWorld(step.focusAfter);
+    if (output) {
+      this.cb.onToast(`$ ${step.command} → ${output}`, false, 4400);
+    }
+    this.emit();
+  }
+
+  public submitAcademyCliCommand(rawCmd: string): void {
+    if (!this.academyActive || !this.academySandbox) return;
+    const clean = rawCmd.trim().replace(/^\$\s*/, '');
+    if (!clean) return;
+
+    const spec =
+      ACADEMY_CHAPTERS.find((c) => c.number === this.academyChapter) ?? ACADEMY_CHAPTERS[0];
+    const currentStep = spec.steps[this.academyStepIndex];
+
+    // If the learner typed the command matching the current guided step, execute that step!
+    if (currentStep?.matchesCli?.(clean)) {
+      const { next, output } = currentStep.run(this.academySandbox);
+      this.academySandbox = next;
+      const completedIdx = this.academyStepIndex;
+      this.academyStepIndex++;
+      if (this.academyStepIndex >= spec.steps.length) {
+        this.academyCompleted.add(spec.number);
+        sound.playRepoLoaded();
+        trackEvent('academy_chapter_completed', { chapter: spec.number });
+      } else {
+        sound.playPop(659.25);
+      }
+      trackEvent('academy_step_completed', {
+        chapter: spec.number,
+        step_index: completedIdx,
+        via: 'cli',
+      });
+      this.applyAcademyStateToWorld(currentStep.focusAfter);
+      if (output) {
+        this.cb.onToast(output, false, 4200);
+      }
+      this.emit();
+      return;
+    }
+
+    // Otherwise execute as free-play sandbox command!
+    const res = executeFreeformGitCommand(this.academySandbox, clean);
+    this.academySandbox = res.next;
+    this.applyAcademyStateToWorld(res.focusHint ?? 'overview');
+    sound.playPop(res.isError ? 330 : 587.33);
+    if (res.output) {
+      this.cb.onToast(res.output, Boolean(res.isError), 4200);
+    }
+    this.emit();
+  }
+
+  public exitAcademy(): void {
+    if (!this.academyActive) return;
+    this.academyActive = false;
+    this.academySandbox = null;
+    const restoreGraph = this.preAcademyGraph ?? createDemoRepoGraph();
+    this.preAcademyGraph = null;
+    this.rebuildVillageFromGraph(restoreGraph);
+    this.flyToOverview();
+    sound.playPop(523.25);
+
+    this.cb.onSyncUrl({
+      repo:
+        !restoreGraph.isDemo && !restoreGraph.isLocal
+          ? `${restoreGraph.owner}/${restoreGraph.repo}`
+          : null,
+      local: restoreGraph.isLocal ? (restoreGraph.localPath ?? null) : null,
+      branch:
+        restoreGraph.currentBranch && restoreGraph.currentBranch !== restoreGraph.defaultBranch
+          ? restoreGraph.currentBranch
+          : null,
+      heatmapUser: null,
+      heatmapYear: null,
+      heatmapTheme: null,
+      learn: false,
+      chapter: null,
+    });
+    this.emit();
+  }
+
+  private applyAcademyStateToWorld(focusHint: AcademyFocusHint): void {
+    if (!this.academySandbox) return;
+    const graph = compileAcademyGraph(this.academySandbox);
+    this.rebuildVillageFromGraph(graph);
+
+    // Before `git init` in Chapter 1, hide islands & Gate so only mist clouds float in the void!
+    if (!this.academySandbox.initialized && this.builtWorld) {
+      const cloudSet = new Set(this.builtWorld.animatedProps.clouds.map((c) => c.mesh));
+      const crystalSet = new Set(
+        this.builtWorld.animatedProps.floatingCrystals.map((c) => c.mesh),
+      );
+      for (const ch of this.builtWorld.worldGroup.children) {
+        ch.visible = cloudSet.has(ch) || crystalSet.has(ch);
+      }
+      this.flyToOverview();
+      return;
+    }
+
+    if (this.academySandbox.bisectRequested) {
+      this.academySandbox.bisectRequested = false;
+      this.startBisect();
+      return;
+    }
+
+    if (focusHint === 'gate') {
+      this.flyToGate(false);
+    } else if (focusHint === 'conflict') {
+      this.flyToConflictZone(false);
+    } else if (focusHint === 'stash') {
+      if (this.builtWorld && this.builtWorld.stashChests.length > 0) {
+        this.focusStashByIndex(0);
+      } else {
+        this.flyToOverview();
+      }
+    } else if (focusHint === 'ghosts') {
+      this.flyToGhostRuins();
+    } else if (focusHint === 'bisect') {
+      this.startBisect();
+    } else if (focusHint === 'head') {
+      const curBr = this.academySandbox.currentBranch;
+      const headSha = this.academySandbox.branchHeads[curBr];
+      const v = headSha ? this.villagerBySha.get(headSha) : undefined;
+      if (v) {
+        this.focusOnVillager(v, false);
+      } else {
+        this.flyToOverview();
+      }
+    } else {
+      this.flyToOverview();
+    }
   }
 
   public focusHeatmapTower(tower: BuiltHeatmapTower): void {
@@ -1657,6 +1902,8 @@ export class VillageEngine {
   }
 
   public loadConflictDemo(updateUrl = true): void {
+    this.academyActive = false;
+    this.academySandbox = null;
     this.currentLoadController?.abort();
     this.activeBrowserSource = null;
     const conflictGraph = createConflictDemoRepoGraph();
@@ -1988,6 +2235,8 @@ export class VillageEngine {
     source: BrowserRepoSource,
     targetBranch?: string,
   ): Promise<void> {
+    this.academyActive = false;
+    this.academySandbox = null;
     this.currentLoadController?.abort();
     this.isLoading = true;
     this.emit();
@@ -2056,6 +2305,8 @@ export class VillageEngine {
       return;
     }
 
+    this.academyActive = false;
+    this.academySandbox = null;
     this.activeBrowserSource = null;
     this.currentLoadController?.abort();
     const controller = new AbortController();
@@ -2126,7 +2377,14 @@ export class VillageEngine {
   }
 
   public async pollLocalRepoNow(manualFeedback = false): Promise<void> {
-    if (this.activeGraph.isDemo || !this.activeGraph.isLocal || this.isPollingLocal) return;
+    if (
+      this.academyActive ||
+      this.activeGraph.isDemo ||
+      !this.activeGraph.isLocal ||
+      this.isPollingLocal
+    ) {
+      return;
+    }
     if (
       !this.activeBrowserSource?.dirHandle &&
       (!this.cb.localServerEnabled || !this.activeGraph.localPath)
@@ -2191,6 +2449,8 @@ export class VillageEngine {
       return;
     }
 
+    this.academyActive = false;
+    this.academySandbox = null;
     this.currentLoadController?.abort();
     this.activeBrowserSource = null;
 
@@ -3941,6 +4201,11 @@ export class VillageEngine {
       replayHeatmapWave: (d?: number) => self.replayHeatmapWave(d),
       exitHeatmapMode: () => self.exitHeatmapMode(),
       focusHeatmapTower: (tw: BuiltHeatmapTower) => self.focusHeatmapTower(tw),
+      startAcademy: (ch = 1) => self.startAcademy(ch, 'cta', true),
+      runAcademyGuidedStep: () => self.runAcademyGuidedStep(),
+      submitAcademyCliCommand: (cmd: string) => self.submitAcademyCliCommand(cmd),
+      resetAcademyChapter: () => self.resetAcademyChapter(),
+      exitAcademy: () => self.exitAcademy(),
       focusOnVillager: (v: VillagerEntity, play = true) => self.focusOnVillager(v, play),
       focusVillagerBySha: (s: string) => self.focusVillagerBySha(s),
       focusOnGateVisitor: (gv: GateVisitorEntity, play = true, move = true) =>

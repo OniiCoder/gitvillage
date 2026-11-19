@@ -1,5 +1,6 @@
 import { Head } from '@inertiajs/react';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { AcademyPanel } from '@/Components/AcademyPanel';
 import { BisectBar } from '@/Components/BisectBar';
 import { BottomFilterDock } from '@/Components/BottomFilterDock';
 import { CensusPopover } from '@/Components/CensusPopover';
@@ -31,6 +32,16 @@ function createInitialSnapshot(): VillageEngineSnapshot {
     graph: demo,
     heatmap: null,
     heatmapTheme: 'emerald',
+    academy: {
+      active: false,
+      chapterNumber: 1,
+      stepIndex: 0,
+      completedChapters: [],
+      chapterDone: false,
+      initialized: true,
+      currentBranch: 'main',
+      terminal: [],
+    },
     clans: [...clanMap.values()],
     clanMap,
     villagerCount: [...demo.commitsBySha.values()].length,
@@ -77,6 +88,8 @@ export default function VillageIndex({
   initialHeatmapUser,
   initialHeatmapYear,
   initialHeatmapTheme,
+  initialLearnMode,
+  initialLearnChapter,
   directorMode,
   localServerEnabled,
   nativeFinderSupported,
@@ -146,7 +159,9 @@ export default function VillageIndex({
       getGithubToken: () => githubTokenRef.current,
       onStateChange: (next) => {
         setSnapshot(next);
-        if (next.heatmap) {
+        if (next.academy.active) {
+          setRepoInput('');
+        } else if (next.heatmap) {
           setRepoInput(`@${next.heatmap.username}`);
         } else if (next.graph.isDemo) {
           setRepoInput('');
@@ -157,8 +172,36 @@ export default function VillageIndex({
         }
       },
       onToast: showToast,
-      onSyncUrl: ({ repo, local, branch, heatmapUser, heatmapYear, heatmapTheme }) => {
+      onSyncUrl: ({
+        repo,
+        local,
+        branch,
+        heatmapUser,
+        heatmapYear,
+        heatmapTheme,
+        learn,
+        chapter,
+      }) => {
         const url = new URL(window.location.href);
+        if (learn) {
+          url.pathname = '/learn';
+          url.searchParams.delete('repo');
+          url.searchParams.delete('local');
+          url.searchParams.delete('branch');
+          url.searchParams.delete('user');
+          url.searchParams.delete('year');
+          url.searchParams.delete('theme');
+          url.searchParams.delete('learn');
+          if (chapter && chapter > 1) {
+            url.searchParams.set('chapter', String(chapter));
+          } else {
+            url.searchParams.delete('chapter');
+          }
+          window.history.replaceState({}, '', url);
+          return;
+        }
+        url.searchParams.delete('chapter');
+        url.searchParams.delete('learn');
         if (heatmapUser) {
           url.pathname = `/u/${heatmapUser}`;
           url.searchParams.delete('repo');
@@ -207,7 +250,9 @@ export default function VillageIndex({
     engineRef.current = engine;
 
     const initialConflictParam = new URLSearchParams(window.location.search).get('conflict');
-    if (initialHeatmapUser) {
+    if (initialLearnMode) {
+      engine.startAcademy(initialLearnChapter ?? 1, 'url', false);
+    } else if (initialHeatmapUser) {
       void engine.loadUserHeatmap(initialHeatmapUser, {
         year: initialHeatmapYear ?? null,
         theme: initialHeatmapTheme ?? null,
@@ -455,13 +500,15 @@ export default function VillageIndex({
     };
   })();
 
-  const pageTitle = snapshot.heatmap
-    ? `@${snapshot.heatmap.username} · 3D GitHub Contribution Skyline`
-    : snapshot.graph.isDemo
-      ? 'Sky Village'
-      : snapshot.graph.isLocal
-        ? `${snapshot.graph.repo} (Local)`
-        : `${snapshot.graph.owner}/${snapshot.graph.repo}`;
+  const pageTitle = snapshot.academy.active
+    ? `Git Academy · Lab ${snapshot.academy.chapterNumber}/10 — Learn Git in 3D`
+    : snapshot.heatmap
+      ? `@${snapshot.heatmap.username} · 3D GitHub Contribution Skyline`
+      : snapshot.graph.isDemo
+        ? 'Sky Village'
+        : snapshot.graph.isLocal
+          ? `${snapshot.graph.repo} (Local)`
+          : `${snapshot.graph.owner}/${snapshot.graph.repo}`;
 
   return (
     <>
@@ -492,6 +539,7 @@ export default function VillageIndex({
       <SpatialTopbar
         graph={snapshot.graph}
         heatmap={snapshot.heatmap}
+        academyChapter={snapshot.academy.active ? snapshot.academy.chapterNumber : null}
         villagerCount={snapshot.villagerCount}
         gateVisitorsCount={snapshot.gateVisitorsCount}
         clans={snapshot.clans}
@@ -537,6 +585,7 @@ export default function VillageIndex({
         onSelectLocalPath={(p) => void engineRef.current?.loadLocalRepo(p, true)}
         onOpenLocalModal={openLocalModal}
         onLoadConflictDemo={() => engineRef.current?.loadConflictDemo(true)}
+        onStartLearnGit={() => engineRef.current?.startAcademy(1, 'presets', true)}
       />
 
       <CensusPopover
@@ -587,7 +636,16 @@ export default function VillageIndex({
         onStop={() => engineRef.current?.stopTimeLapse()}
       />
 
-      {snapshot.heatmap ? (
+      <AcademyPanel
+        academy={snapshot.academy}
+        onSelectChapter={(ch) => engineRef.current?.startAcademy(ch, 'cta', true)}
+        onRunGuidedStep={() => engineRef.current?.runAcademyGuidedStep()}
+        onSubmitCli={(cmd) => engineRef.current?.submitAcademyCliCommand(cmd)}
+        onResetChapter={() => engineRef.current?.resetAcademyChapter()}
+        onExitAcademy={() => engineRef.current?.exitAcademy()}
+      />
+
+      {snapshot.academy.active ? null : snapshot.heatmap ? (
         <HeatmapDock
           heatmap={snapshot.heatmap}
           theme={snapshot.heatmapTheme}
@@ -621,6 +679,7 @@ export default function VillageIndex({
           }}
           onRandomVillager={() => engineRef.current?.focusRandomVillager()}
           onResetOverview={() => engineRef.current?.flyToOverview()}
+          onStartLearnGit={() => engineRef.current?.startAcademy(1, 'cta', true)}
         />
       )}
 
@@ -678,6 +737,8 @@ export default function VillageIndex({
         graph={snapshot.graph}
         heatmap={snapshot.heatmap}
         heatmapTheme={snapshot.heatmapTheme}
+        academyActive={snapshot.academy.active}
+        academyChapter={snapshot.academy.chapterNumber}
         isRecording={recordingState.active}
         recordingProgress={recordingState.progress}
         recordingLabel={recordingState.label}

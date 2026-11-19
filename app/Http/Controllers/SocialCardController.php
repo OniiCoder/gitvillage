@@ -51,6 +51,28 @@ class SocialCardController extends Controller
         ]);
     }
 
+    public function learnOg(): Response
+    {
+        $png = Cache::remember('gitvillage_og_learn_v1', now()->addHours(6), function (): string {
+            $host = parse_url(config('app.url', 'https://gitvillage.on-forge.com'), PHP_URL_HOST) ?: 'gitvillage.on-forge.com';
+
+            return $this->renderOgPng(
+                title: 'Learn Git in 3D',
+                subtitle: '10 hands-on 3D chapters: init, staging, branches, merges, conflicts, stash, rebase, cherry-pick & reflog rescue.',
+                defaultBranch: '10 Interactive Labs',
+                stars: null,
+                language: 'Beginner → Advanced',
+                footerUrl: "{$host}/learn",
+                isRepoCard: false,
+            );
+        });
+
+        return response($png, 200, [
+            'Content-Type' => 'image/png',
+            'Cache-Control' => 'public, max-age=3600, s-maxage=3600',
+        ]);
+    }
+
     public function repoOg(string $owner, string $repo): Response
     {
         $safeOwner = preg_replace('/[^A-Za-z0-9_.-]/', '', $owner) ?: 'github';

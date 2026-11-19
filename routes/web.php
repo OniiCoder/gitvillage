@@ -14,12 +14,14 @@ Route::get('/gh/{owner}/{repo}', [VillageController::class, 'github'])
 Route::get('/u/{username}', [VillageController::class, 'heatmap'])
     ->where(['username' => '[A-Za-z0-9-]+'])
     ->name('village.heatmap');
+Route::get('/learn', [VillageController::class, 'learn'])->name('village.learn');
 
 Route::get('/api/github-heatmap/{username}', [HeatmapController::class, 'show'])
     ->where(['username' => '[A-Za-z0-9@-]+'])
     ->name('api.github-heatmap');
 
 Route::get('/og/default.png', [SocialCardController::class, 'defaultOg'])->name('og.default');
+Route::get('/og/learn.png', [SocialCardController::class, 'learnOg'])->name('og.learn');
 Route::get('/og/u/{username}.png', [SocialCardController::class, 'userHeatmapOg'])
     ->where(['username' => '[A-Za-z0-9-]+'])
     ->name('og.heatmap');

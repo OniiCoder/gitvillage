@@ -7,6 +7,7 @@ import type { CameraMode, GitHubHeatmapData, RepoVillageGraph, TimeOfDay } from 
 interface SpatialTopbarProps {
   graph: RepoVillageGraph;
   heatmap?: GitHubHeatmapData | null;
+  academyChapter?: number | null;
   villagerCount: number;
   gateVisitorsCount: number;
   clans: ContributorClanProfile[];
@@ -33,6 +34,7 @@ interface SpatialTopbarProps {
 export function SpatialTopbar({
   graph,
   heatmap,
+  academyChapter,
   villagerCount,
   gateVisitorsCount,
   clans,
@@ -136,7 +138,16 @@ export function SpatialTopbar({
         </span>
         <div className="brand-meta">
           <span className="brand-name">GitVillage</span>
-          {heatmap ? (
+          {academyChapter ? (
+            <>
+              <span className="meta-pill academy-active-pill">
+                <span aria-hidden="true">🎓</span> Git Academy · Lab {academyChapter}/10
+              </span>
+              <span className="meta-pill meta-pill-branch">
+                {graph.currentBranch ?? 'main'}
+              </span>
+            </>
+          ) : heatmap ? (
             <>
               <span className="meta-pill heatmap-user-pill">
                 <span aria-hidden="true">🟩</span> @{heatmap.username}

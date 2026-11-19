@@ -16,14 +16,18 @@ class VillageController extends Controller
         $userQuery = $request->query('user');
         $yearQuery = $request->query('year');
         $themeQuery = $request->query('theme');
+        $learnQuery = $request->has('learn');
+        $chapterQuery = $request->query('chapter');
         $initialRepo = is_string($repoQuery) && $repoQuery !== '' ? $repoQuery : null;
         $initialHeatmapUser = is_string($userQuery) && preg_match('/^[A-Za-z0-9-]+$/', trim($userQuery, '@ '))
             ? trim($userQuery, '@ ')
             : null;
 
-        $ogMeta = $initialHeatmapUser !== null
-            ? $this->buildHeatmapOgMeta($initialHeatmapUser)
-            : $this->buildOgMeta($request, $initialRepo);
+        $ogMeta = $learnQuery
+            ? $this->buildLearnOgMeta()
+            : ($initialHeatmapUser !== null
+                ? $this->buildHeatmapOgMeta($initialHeatmapUser)
+                : $this->buildOgMeta($request, $initialRepo));
 
         return Inertia::render('Village/Index', [
             'initialRepo' => $initialRepo,
@@ -32,6 +36,8 @@ class VillageController extends Controller
             'initialHeatmapUser' => $initialHeatmapUser,
             'initialHeatmapYear' => is_numeric($yearQuery) ? (int) $yearQuery : null,
             'initialHeatmapTheme' => is_string($themeQuery) ? $themeQuery : null,
+            'initialLearnMode' => $learnQuery,
+            'initialLearnChapter' => is_numeric($chapterQuery) ? (int) $chapterQuery : null,
             'directorMode' => $request->has('director'),
             'localServerEnabled' => app()->isLocal(),
             'nativeFinderSupported' => app()->isLocal() && PHP_OS_FAMILY === 'Darwin',
@@ -52,6 +58,8 @@ class VillageController extends Controller
             'initialHeatmapUser' => null,
             'initialHeatmapYear' => null,
             'initialHeatmapTheme' => null,
+            'initialLearnMode' => false,
+            'initialLearnChapter' => null,
             'directorMode' => $request->has('director'),
             'localServerEnabled' => app()->isLocal(),
             'nativeFinderSupported' => app()->isLocal() && PHP_OS_FAMILY === 'Darwin',
@@ -73,11 +81,47 @@ class VillageController extends Controller
             'initialHeatmapUser' => $safeUser,
             'initialHeatmapYear' => is_numeric($yearQuery) ? (int) $yearQuery : null,
             'initialHeatmapTheme' => is_string($themeQuery) ? $themeQuery : null,
+            'initialLearnMode' => false,
+            'initialLearnChapter' => null,
             'directorMode' => $request->has('director'),
             'localServerEnabled' => app()->isLocal(),
             'nativeFinderSupported' => app()->isLocal() && PHP_OS_FAMILY === 'Darwin',
             'showcaseRepos' => $this->showcaseRepos(),
         ])->withViewData(['ogMeta' => $ogMeta]);
+    }
+
+    public function learn(Request $request): Response
+    {
+        $chapterQuery = $request->query('chapter');
+        $ogMeta = $this->buildLearnOgMeta();
+
+        return Inertia::render('Village/Index', [
+            'initialRepo' => null,
+            'initialLocal' => null,
+            'initialBranch' => null,
+            'initialHeatmapUser' => null,
+            'initialHeatmapYear' => null,
+            'initialHeatmapTheme' => null,
+            'initialLearnMode' => true,
+            'initialLearnChapter' => is_numeric($chapterQuery) ? (int) $chapterQuery : 1,
+            'directorMode' => $request->has('director'),
+            'localServerEnabled' => app()->isLocal(),
+            'nativeFinderSupported' => app()->isLocal() && PHP_OS_FAMILY === 'Darwin',
+            'showcaseRepos' => $this->showcaseRepos(),
+        ])->withViewData(['ogMeta' => $ogMeta]);
+    }
+
+    /**
+     * @return array{title: string, description: string, url: string, image: string}
+     */
+    private function buildLearnOgMeta(): array
+    {
+        return [
+            'title' => 'GitVillage Academy — Learn Git Visually in an Interactive 3D World',
+            'description' => 'Master every Git concept hands-on in 3D: git init, staging, commits, branches, merges, conflicts, stash, rebase, cherry-pick, and reflog rescue.',
+            'url' => url('/learn'),
+            'image' => route('og.learn'),
+        ];
     }
 
     /**

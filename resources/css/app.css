@@ -3644,6 +3644,299 @@
     font-weight: 600;
   }
 
+  /* Interactive 3D Git Academy CTA & Lesson Panel */
+  .learn-git-cta-btn {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.38), rgba(16, 185, 129, 0.32));
+    box-shadow:
+      inset 0 0 0 0.85px rgba(165, 180, 252, 0.62),
+      0 2px 10px rgba(99, 102, 241, 0.28);
+    color: #f8fafc;
+    font-weight: 600;
+  }
+
+  @media (hover: hover) {
+    .learn-git-cta-btn:hover {
+      filter: brightness(1.1);
+    }
+  }
+
+  .preset-card-learn {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(14, 165, 233, 0.14));
+    box-shadow: inset 0 0 0 0.75px rgba(129, 140, 248, 0.48);
+  }
+
+  .academy-active-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    min-block-size: 1.7rem;
+    padding-inline: 0.62rem;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.28), rgba(14, 165, 233, 0.2));
+    box-shadow: inset 0 0 0 0.75px rgba(165, 180, 252, 0.52);
+    color: #e0e7ff;
+    font-weight: 600;
+  }
+
+  .academy-panel {
+    position: fixed;
+    top: 4.45rem;
+    left: 0.85rem;
+    z-index: 25;
+    inline-size: min(25.2rem, calc(100vw - 1.7rem));
+    max-block-size: calc(100dvh - 5.5rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0.95rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.68rem;
+  }
+
+  .academy-panel.is-minimized {
+    gap: 0.48rem;
+    padding-block: 0.75rem;
+  }
+
+  .academy-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.55rem;
+  }
+
+  .academy-title-group {
+    min-inline-size: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.18rem;
+  }
+
+  .academy-badge-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+  }
+
+  .academy-tier-pill {
+    font-size: 0.67rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0.1rem 0.45rem;
+    border-radius: var(--radius-capsule);
+    background: rgba(99, 102, 241, 0.26);
+    color: #c7d2fe;
+  }
+
+  .academy-mastery-text {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--ink-tertiary);
+  }
+
+  .academy-heading {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 650;
+    letter-spacing: -0.018em;
+    line-height: 1.28;
+    color: var(--ink-primary);
+  }
+
+  .academy-header-btns {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex: none;
+  }
+
+  .academy-mini-btn {
+    min-block-size: 1.7rem;
+    padding-inline: 0.52rem;
+    font-size: 0.72rem;
+  }
+
+  .academy-progress {
+    flex: none;
+  }
+
+  .academy-chapter-strip {
+    display: flex;
+    align-items: center;
+    gap: 0.28rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+    padding-block: 0.08rem;
+    flex: none;
+  }
+
+  .academy-chapter-strip::-webkit-scrollbar {
+    display: none;
+  }
+
+  .academy-ch-chip {
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+    border: none;
+    border-radius: var(--radius-capsule);
+    min-block-size: 1.72rem;
+    padding-inline: 0.56rem;
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: inset 0 0 0 0.5px var(--hairline-subtle);
+    color: var(--ink-secondary);
+    font-family: var(--font-mono);
+    font-size: 0.71rem;
+    font-weight: 600;
+    cursor: pointer;
+    position: relative;
+  }
+
+  .academy-ch-chip.is-done {
+    color: #86efac;
+    background: rgba(16, 185, 129, 0.14);
+  }
+
+  .academy-ch-chip.is-current {
+    background: rgba(99, 102, 241, 0.3);
+    box-shadow: inset 0 0 0 1.5px #818cf8;
+    color: #ffffff;
+  }
+
+  .academy-concept-copy {
+    margin: 0;
+    font-size: 0.77rem;
+    line-height: 1.46;
+    color: var(--ink-secondary);
+  }
+
+  .academy-step-box {
+    display: flex;
+    flex-direction: column;
+    gap: 0.48rem;
+    padding: 0.72rem 0.78rem;
+    background: rgba(15, 23, 42, 0.52);
+    box-shadow: inset 0 0 0 0.75px rgba(129, 140, 248, 0.36);
+  }
+
+  .academy-step-box.is-complete {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.16), rgba(99, 102, 241, 0.14));
+    box-shadow: inset 0 0 0 0.75px rgba(74, 222, 128, 0.45);
+  }
+
+  .academy-step-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem;
+  }
+
+  .academy-step-instruction {
+    margin: 0;
+    font-size: 0.79rem;
+    line-height: 1.44;
+    color: var(--ink-primary);
+    font-weight: 500;
+  }
+
+  .academy-visual-cue {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.38rem;
+    font-size: 0.73rem;
+    line-height: 1.38;
+    color: #93c5fd;
+    background: rgba(14, 165, 233, 0.1);
+    padding: 0.38rem 0.52rem;
+    border-radius: 0.48rem;
+  }
+
+  .academy-cmd-preview {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    padding: 0.36rem 0.55rem;
+    border-radius: 0.45rem;
+    background: rgba(2, 6, 18, 0.72);
+    color: #86efac;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .academy-primary-cta {
+    inline-size: 100%;
+    justify-content: center;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.38rem;
+    white-space: normal;
+    text-align: center;
+    padding-block: 0.48rem;
+    padding-inline: 0.75rem;
+  }
+
+  .academy-terminal-box {
+    display: flex;
+    flex-direction: column;
+    gap: 0.38rem;
+    border-radius: var(--radius-group);
+    background: rgba(2, 6, 16, 0.76);
+    box-shadow: inset 0 0 0 0.5px var(--hairline-border);
+    padding: 0.52rem 0.62rem;
+  }
+
+  .academy-terminal-log {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    max-block-size: 5.5rem;
+    overflow-y: auto;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    line-height: 1.36;
+  }
+
+  .academy-log-cmd {
+    color: #94a3b8;
+  }
+
+  .academy-log-out {
+    color: #cbd5e1;
+  }
+
+  .academy-log-item.is-error .academy-log-out {
+    color: #fca5a5;
+  }
+
+  .academy-cli-form {
+    display: flex;
+    align-items: center;
+    gap: 0.36rem;
+    border-block-start: 0.5px solid rgba(255, 255, 255, 0.08);
+    padding-block-start: 0.34rem;
+  }
+
+  .academy-cli-prompt {
+    font-family: var(--font-mono);
+    font-size: 0.71rem;
+    color: #4ade80;
+    white-space: nowrap;
+    user-select: none;
+  }
+
+  .academy-cli-input {
+    flex: 1;
+    min-inline-size: 0;
+    border: none;
+    background: transparent;
+    color: #f8fafc;
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    min-block-size: 1.85rem;
+    outline: none;
+  }
+
   @media (pointer: coarse) {
     .repo-form input,
     .branch-search-wrap input,
@@ -3801,6 +4094,25 @@
       inline-size: auto;
       max-block-size: min(46dvh, calc(100dvh - 17.6rem));
       padding: 0.9rem;
+    }
+
+    .academy-panel {
+      top: auto;
+      bottom: calc(3rem + env(safe-area-inset-bottom, 0px));
+      left: 0.5rem;
+      right: 0.5rem;
+      inline-size: auto;
+      max-block-size: min(46dvh, calc(100dvh - 12rem));
+      padding: 0.82rem 0.88rem;
+    }
+
+    .academy-cli-input {
+      font-size: 1rem;
+    }
+
+    body:has(#bisect-hud) .academy-panel {
+      bottom: calc(10.8rem + env(safe-area-inset-bottom, 0px));
+      max-block-size: min(35dvh, calc(100dvh - 19.8rem));
     }
 
     .diff-viewer-dialog {

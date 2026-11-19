@@ -304,4 +304,24 @@ HTML;
         $this->assertSame(1200, $ogSize[0]);
         $this->assertSame(630, $ogSize[1]);
     }
+
+    public function test_learn_git_academy_route_and_og_card_render(): void
+    {
+        $this->get('/learn?chapter=4')
+            ->assertOk()
+            ->assertSee('/og/learn.png', false)
+            ->assertInertia(
+                fn (Assert $page) => $page
+                    ->component('Village/Index')
+                    ->where('initialLearnMode', true)
+                    ->where('initialLearnChapter', 4),
+            );
+
+        $ogRes = $this->get('/og/learn.png')->assertOk();
+        $this->assertSame('image/png', $ogRes->headers->get('Content-Type'));
+        $ogSize = getimagesizefromstring((string) $ogRes->getContent());
+        $this->assertIsArray($ogSize);
+        $this->assertSame(1200, $ogSize[0]);
+        $this->assertSame(630, $ogSize[1]);
+    }
 }

@@ -12,6 +12,7 @@ interface BottomFilterDockProps {
   onStartTimeLapse: () => void;
   onRandomVillager: () => void;
   onResetOverview: () => void;
+  onStartLearnGit: () => void;
 }
 
 const FILTERS: Array<{ id: string; label: string; dotClass?: string }> = [
@@ -34,6 +35,7 @@ export function BottomFilterDock({
   onStartTimeLapse,
   onRandomVillager,
   onResetOverview,
+  onStartLearnGit,
 }: BottomFilterDockProps) {
   return (
     <nav className="bottom-dock" aria-label="Filter commits and camera">
@@ -115,6 +117,17 @@ export function BottomFilterDock({
         >
           <SfIcon name="sf-viewfinder" size={14} />
           <span>Overview</span>
+        </button>
+
+        <button
+          type="button"
+          id="learn-git-cta"
+          className="dock-action-btn learn-git-cta-btn"
+          title="Interactive 3D Git Academy — learn every Git concept hands-on from git init to rebase & reflog"
+          onClick={onStartLearnGit}
+        >
+          <span aria-hidden="true">🎓</span>
+          <span>Learn Git</span>
         </button>
       </div>
     </nav>

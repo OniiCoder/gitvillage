@@ -370,6 +370,8 @@ export interface VillagePageProps {
   initialHeatmapUser?: string | null;
   initialHeatmapYear?: number | null;
   initialHeatmapTheme?: string | null;
+  initialLearnMode?: boolean;
+  initialLearnChapter?: number | null;
   directorMode: boolean;
   localServerEnabled: boolean;
   nativeFinderSupported: boolean;

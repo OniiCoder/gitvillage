@@ -11,6 +11,8 @@ interface ShareStudioDialogProps {
   graph: RepoVillageGraph;
   heatmap?: GitHubHeatmapData | null;
   heatmapTheme?: HeatmapTheme;
+  academyActive?: boolean;
+  academyChapter?: number;
   isRecording: boolean;
   recordingProgress: number;
   recordingLabel: string;
@@ -26,6 +28,8 @@ export function ShareStudioDialog({
   graph,
   heatmap,
   heatmapTheme = 'emerald',
+  academyActive = false,
+  academyChapter = 1,
   isRecording,
   recordingProgress,
   recordingLabel,
@@ -51,7 +55,12 @@ export function ShareStudioDialog({
       : 'OniiCoder/gitvillage';
 
   const shareUrlObj = new URL(origin);
-  if (heatmap) {
+  if (academyActive) {
+    shareUrlObj.pathname = '/learn';
+    if (academyChapter && academyChapter > 1) {
+      shareUrlObj.searchParams.set('chapter', String(academyChapter));
+    }
+  } else if (heatmap) {
     shareUrlObj.pathname = `/u/${heatmap.username}`;
     if (heatmap.year) {
       shareUrlObj.searchParams.set('year', String(heatmap.year));
@@ -77,8 +86,10 @@ export function ShareStudioDialog({
   const htmlBadge = `<a href="${publicVillageUrl}"><img src="${publicBadgeUrl}" alt="Explore ${badgeSlug} in 3D on GitVillage" height="28"></a>`;
 
   const tweetText = encodeURIComponent(
-    heatmap
-      ? `My GitHub contribution heatmap as a living 3D floating-island skyline in GitVillage 🏝️🟩 — ${heatmap.totalContributions.toLocaleString()} contributions & a ${heatmap.longestStreak}-day streak!`
+    academyActive
+      ? 'Learning Git hands-on in a living 3D floating-island world — from git init & staging to rebase, conflicts & reflog rescue 🎓🏝️'
+      : heatmap
+        ? `My GitHub contribution heatmap as a living 3D floating-island skyline in GitVillage 🏝️🟩 — ${heatmap.totalContributions.toLocaleString()} contributions & a ${heatmap.longestStreak}-day streak!`
       : !graph.isDemo && !graph.isLocal
         ? `Exploring ${graph.owner}/${graph.repo} as a living 3D floating-island world in GitVillage 🏝️`
         : 'Turn any Git repository into a living 3D floating-island world with GitVillage 🏝️',

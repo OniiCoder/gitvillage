@@ -12,6 +12,7 @@ interface PresetsPopoverProps {
   onSelectLocalPath: (path: string) => void;
   onOpenLocalModal: () => void;
   onLoadConflictDemo: () => void;
+  onStartLearnGit: () => void;
 }
 
 export function PresetsPopover({
@@ -23,6 +24,7 @@ export function PresetsPopover({
   onSelectLocalPath,
   onOpenLocalModal,
   onLoadConflictDemo,
+  onStartLearnGit,
 }: PresetsPopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const [discoveredRepos, setDiscoveredRepos] = useState<DiscoveredLocalRepo[]>([]);
@@ -131,6 +133,21 @@ export function PresetsPopover({
               <span className="status-dot dot-green" aria-hidden="true" />
             </div>
             <span>Turn any @username into a 3D floating skyline &amp; export for social media</span>
+          </button>
+          <button
+            type="button"
+            id="presets-learn-git-btn"
+            className="preset-card preset-card-learn"
+            onClick={() => {
+              hidePopover();
+              onStartLearnGit();
+            }}
+          >
+            <div className="preset-card-head">
+              <strong>🎓 Learn Git in 3D (10 Labs)</strong>
+              <span className="status-dot dot-cyan" aria-hidden="true" />
+            </div>
+            <span>Interactive dojo from git init &amp; staging to rebase, conflicts &amp; reflog</span>
           </button>
         </div>
       </div>
