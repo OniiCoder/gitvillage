@@ -2644,7 +2644,7 @@ export class VillageEngine {
   private animate = (): void => {
     if (this.disposed) return;
     this.rafId = window.requestAnimationFrame(this.animate);
-    const dt = Math.min(0.05, this.clock.getDelta());
+    const dt = Math.max(0, Math.min(0.05, this.clock.getDelta()));
     const elapsed = this.clock.elapsedTime;
 
     if (this.builtWorld) {
